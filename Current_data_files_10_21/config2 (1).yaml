@@ -1,0 +1,16 @@
+species:
+- Haddock
+latmin: 35.0
+latmax: 46.0
+lonmin: -75.0
+lonmax: -60.0
+version: two
+start_year: 2000.0
+end_year: 2023.0
+envVars:
+- BO21_tempmean_bdmax
+- BO21_tempmean_ss
+- BO22_chlomean_ss
+- BO22_salinitymean_bdmax
+- BO22_salinitymean_ss
+
