@@ -1,0 +1,62 @@
+---
+title: "abundanceSignificance"
+output: html_document
+date: "2025-01-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+library(readr)
+```
+
+
+```{r pressure, echo=FALSE}
+silverhake = read.csv("/Users/lizamaguire/Desktop/Species abundance/decades_data/silverhakeDacades.csv")
+```
+
+```{r}
+silverhakelmmodel <- lm(Latitude ~ Decade, weights = ScaledAbundance, data = silverhake)
+summary(silverhakelmmodel)
+```
+```{r}
+pollock = read.csv("/Users/lizamaguire/Desktop/Species abundance/decades_data/pollockdecades.csv")
+```
+
+```{r}
+pollocklmmodel <- lm(Latitude ~ Decade, weights = ScaledAbundance, data = pollock)
+summary(pollocklmmodel)
+```
+```{r}
+haddock = read.csv("/Users/lizamaguire/Desktop/Species abundance/decades_data/haddockdecades.csv")
+
+haddocklmmodel <- lm(Latitude ~ Decade, weights = ScaledAbundance, data = haddock)
+summary(haddocklmmodel)
+```
+```{r}
+cod = read.csv("/Users/lizamaguire/Desktop/Species abundance/decades_data/coddecades.csv")
+
+codlmmodel <- lm(Latitude ~ Decade, weights = ScaledAbundance, data = cod)
+```
+
+
+```{r}
+summary(codlmmodel)
+```
+
+```{r}
+whitehake = read.csv("/Users/lizamaguire/Desktop/Species abundance/decades_data/whiteHakedecades.csv")
+
+whitehakelmmodel <- lm(Latitude ~ Decade, weights = ScaledAbundance, data = whitehake)
+summary(whitehakelmmodel)
+```
+```{r}
+redhake = read.csv("/Users/lizamaguire/Desktop/Species abundance/decades_data/redHakedecades.csv")
+
+redhakelmmodel <- lm(Latitude ~ Decade, weights = ScaledAbundance, data = redhake)
+summary(redhakelmmodel)
+```
+

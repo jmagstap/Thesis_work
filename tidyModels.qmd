@@ -1,0 +1,412 @@
+---
+title: "tidymodels"
+format: html
+editor: visual
+---
+
+```{r}
+source("Setup.R")
+#load species data
+cod_sdm_data = load_species("Cod Atlantic", drop_geometry = TRUE)[[1]] 
+haddock_sdm_data = load_species("Haddock", drop_geometry = TRUE)[[1]]
+winterflounder_sdm_data = load_species("Flounder Winter", drop_geometry = TRUE)[[1]]
+silverhake_sdm_data = load_species("Hake Silver (Whiting)", drop_geometry = TRUE)[[1]]
+lobster_sdm_data = load_species("Lobster American", drop_geometry = TRUE)[[1]]
+pollock_sdm_data = load_species("Pollock", drop_geometry = TRUE)[[1]]
+plaice_sdm_data = load_species("Plaice American (Dab)", drop_geometry = TRUE)[[1]]
+jonah_crab_sdm_data = load_species("Crab Jonah", drop_geometry = TRUE)[[1]]
+white_hake_sdm_data = load_species("Hake White", drop_geometry = TRUE)[[1]]
+red_hake_sdm_data = load_species("Hake Atlantic Red", drop_geometry = TRUE)[[1]]
+```
+
+```{r}
+set.seed(123)
+
+haddock_sdm_data <- haddock_sdm_data %>%
+  mutate(pa = factor(pa, levels = c(0, 1), labels = c("absence", "presence")))
+
+# Split data
+split_species_data(haddock_sdm_data, "haddock") 
+haddock_train_data <- haddock_train_data %>% na.omit()
+hf_folds <- vfold_cv(haddock_train_data, v = 10)
+```
+
+```{r}
+#GAM 
+evaluate_gam <- function(split, id) {
+  train <- analysis(split)
+  test <- assessment(split)
+  
+  out <- tryCatch({
+    gam_fit <- gam(
+      pa ~ s(bot_temp, k = 4) + s(bot_salin, k = 4) + s(bot_ph, k = 4) +
+            s(aspect, k = 4) + s(topographic_position_index, k = 4),
+      family = binomial,
+      data = train
+    )
+
+    preds <- predict(gam_fit, newdata = test, type = "response")
+    
+    eval_tbl <- tibble(
+      truth = factor(test$pa, levels = c(0, 1)),
+      .pred_1 = preds
+    )
+
+    auc <- roc_auc(eval_tbl, truth = truth, .pred_1) %>% pull(.estimate)
+
+    eval_tbl <- eval_tbl %>%
+      mutate(pred_class = factor(ifelse(.pred_1 >= 0.5, 1, 0), levels = c(0, 1)))
+
+    sens_val <- sens(eval_tbl, truth = truth, estimate = pred_class) %>% pull(.estimate)
+    spec_val <- spec(eval_tbl, truth = truth, estimate = pred_class) %>% pull(.estimate)
+    tss <- sens_val + spec_val - 1
+    
+    acc <- accuracy(eval_tbl, truth = truth, estimate = pred_class) %>% pull(.estimate)
+
+    tibble(id = id, model = "GAM", roc_auc = auc, tss = tss, accuracy = acc)
+  }, error = function(e) {
+    warning(paste("GAM failed on fold", id, ":", e$message))
+    tibble(id = id, model = "GAM", roc_auc = NA_real_, tss = NA_real_, accuracy = NA_real_)
+  })
+
+  return(out)
+}
+
+gam_metrics <- purrr::map2_dfr(hf_folds$splits, hf_folds$id, evaluate_gam)
+```
+
+```{r}
+evaluate_glm <- function(split, id) {
+  train <- analysis(split)
+  test <- assessment(split)
+  
+  out <- tryCatch({
+    glm_fit <- glm(
+      pa ~ bot_temp + bot_salin + bot_ph + aspect + topographic_position_index,
+      family = binomial,
+      data = train
+    )
+    
+    preds <- predict(glm_fit, newdata = test, type = "response")
+    
+    eval_tbl <- tibble(
+      truth = factor(test$pa, levels = c(0, 1)),
+      .pred_1 = preds
+    )
+    
+    auc <- roc_auc(eval_tbl, truth = truth, .pred_1) %>% pull(.estimate)
+    
+    eval_tbl <- eval_tbl %>%
+      mutate(pred_class = factor(ifelse(.pred_1 >= 0.5, 1, 0), levels = c(0, 1)))
+    
+    sens_val <- sens(eval_tbl, truth = truth, estimate = pred_class) %>% pull(.estimate)
+    spec_val <- spec(eval_tbl, truth = truth, estimate = pred_class) %>% pull(.estimate)
+    tss <- sens_val + spec_val - 1
+    
+    acc <- accuracy(eval_tbl, truth = truth, estimate = pred_class) %>% pull(.estimate)
+    
+    tibble(id = id, model = "GLM", roc_auc = auc, tss = tss, accuracy = acc)
+  }, error = function(e) {
+    warning(paste("GLM failed on fold", id, ":", e$message))
+    tibble(id = id, model = "GLM", roc_auc = NA_real_, tss = NA_real_, accuracy = NA_real_)
+  })
+  
+  return(out)
+}
+
+# Then run it on your folds:
+glm_metrics <- purrr::map2_dfr(hf_folds$splits, hf_folds$id, evaluate_glm)
+
+```
+
+```{r}
+#recipe for all models
+sdm_recipe <- recipe(pa ~ bot_temp + bot_salin + aspect + topographic_position_index + bot_ph,
+        data = haddock_train_data) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_downsample(pa)
+
+```
+
+```{r}
+#maxent
+#glm_spec <- logistic_reg() %>% set_engine("glm")
+
+rf_spec <- rand_forest(mtry = tune(), trees = 500, min_n = tune()) %>% set_mode("classification") %>% set_engine("ranger")
+
+
+xgb_spec <- boost_tree(trees = 500, learn_rate = tune(), tree_depth = tune()) %>%
+  set_engine("xgboost") %>% set_mode("classification")
+
+ann_spec <- mlp(hidden_units = tune(), penalty = tune()) %>%
+  set_engine("nnet") %>%
+  set_mode("classification")
+```
+
+```{r}
+# Workflows
+#glm_wf <- workflow() %>% add_model(glm_spec) %>% add_recipe(sdm_recipe)
+rf_wf  <- workflow() %>% add_model(rf_spec)  %>% add_recipe(sdm_recipe)
+xgb_wf <- workflow() %>% add_model(xgb_spec) %>% add_recipe(sdm_recipe)
+ann_wf <- workflow() %>% add_model(ann_spec) %>% add_recipe(sdm_recipe)
+```
+
+```{r}
+# Load parallel backend
+library(doParallel)
+
+# Detect and register parallel workers (use one fewer than total cores)
+cl <- makeCluster(parallel::detectCores() - 1)
+registerDoParallel(cl)
+
+# Define tuning grids (you can keep these or reduce size for speed)
+rf_grid <- grid_regular(
+  mtry(range = c(1, 5)),    # Adjusted to max number of predictors
+  min_n(range = c(1, 10)),
+  levels = 5
+)
+
+xgb_grid <- grid_regular(
+  learn_rate(range = c(0.001, 0.3)),
+  tree_depth(range = c(3, 10)),
+  levels = 5
+)
+
+ann_grid <- grid_regular(hidden_units(range = c(1, 10)),
+                         penalty(range = c(-5, 1)), levels = 5)
+```
+
+```{r}
+# GLM
+library(stacks)
+ctrl <- control_stack_resamples()
+
+rf_tuned <- tune_grid(
+  rf_wf,
+  resamples = hf_folds,
+  grid = rf_grid,
+  metrics = metric_set(roc_auc, accuracy, tss),
+)
+
+#glm_res <- fit_resamples(
+  #glm_wf,
+  #resamples = hf_folds,
+  #metrics = metric_set(roc_auc, accuracy, tss),
+#)
+
+xgb_res <- tune_grid(
+  xgb_wf,
+  resamples = hf_folds,
+  grid = xgb_grid,
+  metrics = metric_set(roc_auc, accuracy, tss),
+)
+
+ann_res <- tune_grid(
+  ann_wf,
+  resamples = hf_folds,
+  grid = ann_grid,
+  metrics = metric_set(roc_auc, accuracy, tss)
+)
+# After tuning, stop the parallel cluster
+stopCluster(cl)
+```
+
+```{r}
+#glm_metrics = collect_metrics(glm_res)
+rf_metrics = collect_metrics(rf_tuned)
+xgb_metrics = collect_metrics(xgb_res)
+ann_metrics = collect_metrics(ann_res)
+
+gam_metrics_long <- gam_metrics %>%
+  pivot_longer(cols = c(tss, roc_auc, accuracy), 
+               names_to = ".metric", 
+               values_to = "mean") %>%
+  mutate(model = "GAM")
+
+glm_metrics_long <- glm_metrics %>%
+  pivot_longer(cols = c(tss, roc_auc, accuracy), 
+               names_to = ".metric", 
+               values_to = "mean") %>%
+  mutate(model = "GLM")
+
+glm_metrics$model <- "GLM"
+rf_metrics$model <- "Random Forest"
+xgb_metrics$model <- "XGBoost"
+ann_metrics$model <- "ANN"
+gam_metrics_long$model <- "GAM"
+
+```
+
+```{r}
+combined_metrics <- bind_rows(
+  glm_metrics_long %>% dplyr::select(.metric, mean, model),
+  rf_metrics %>% dplyr::select(.metric, mean, model),
+  xgb_metrics %>% dplyr::select(.metric, mean, model),
+  ann_metrics %>% dplyr::select(.metric, mean, model),
+  gam_metrics_long %>% dplyr::select(.metric, mean, model)
+)
+```
+
+```{r}
+combined_metrics_plot = ggplot(combined_metrics, aes(x = model, y = mean, fill = model)) +
+  geom_boxplot() +
+  facet_wrap(~ .metric, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Model Performance Comparison",
+       x = "Model", y = "Metric Value")
+
+write_csv(combined_metrics, "/Users/lizamaguire/Desktop/redhake_ensemblemodel_metrics.csv")
+```
+
+```{r}
+best_params <- select_best(rf_tuned, metric = "roc_auc")
+
+# Then rebuild final model with best params
+rf_final_spec <- 
+  rand_forest(
+    mtry = best_params$mtry,
+    min_n = best_params$min_n
+  ) %>%
+  set_mode("classification") %>%
+  set_engine("ranger", 
+             importance = "impurity", 
+             probability = TRUE)
+
+rf_final_wf <- rf_wf %>% update_model(rf_final_spec)
+rf_final_fit <- fit(rf_final_wf, data = pollock_train_data)
+
+saveRDS(rf_final_fit, "/Users/lizamaguire/Desktop/nopH_pollock_final_rf_model.rds")
+
+# Load the saved model
+loaded_haddock_rf_model <- readRDS("/Users/lizamaguire/Desktop/final model comparisson results/haddock/haddock_final_rf_model.rds")
+```
+
+```{r}
+# Extract the fitted ranger model
+haddock_rf_core <- extract_fit_parsnip(loaded_haddock_rf_model)$fit
+
+# View importance scores
+var_imp <- haddock_rf_core$variable.importance
+
+# Convert to data frame and order
+importance_df <- as.data.frame(var_imp) %>%
+  tibble::rownames_to_column("variable") %>%
+  rename(importance = var_imp) %>%
+  arrange(desc(importance))
+# Plot using vip
+vip(haddock_rf_core, num_features = 10)
+```
+
+```{r}
+#partial dependence plots
+env_vars <- c("bot_temp", "bot_salin", "aspect", "topographic_position_index", "bot_ph")
+
+# Get the means and sds for each variable from the unscaled training data
+scaling_params <- haddock_train_data %>%
+  dplyr::select(all_of(env_vars)) %>%
+  summarise(across(everything(),
+                   list(mean = mean, sd = sd),
+                   .names = "{.col}_{.fn}"))
+
+# Helper function to back-transform PDP x-axis values
+inverse_scale <- function(var, scaled_values) {
+  mean_val <- scaling_params[[paste0(var, "_mean")]]
+  sd_val <- scaling_params[[paste0(var, "_sd")]]
+  scaled_values * sd_val + mean_val
+}
+
+# Create PDPs for each variable, back-transforming the x-axis
+pdp_df <- map_dfr(env_vars, function(var) {
+  pd <- pdp::partial(haddock_rf_core,
+                pred.var = var,
+                train = bake(prep(sdm_recipe), new_data = haddock_train_data),
+                type = "classification",
+                which.class = 2,
+                prob = TRUE)
+  
+  # Rename and transform x-axis
+  names(pd)[1] <- "value_scaled"
+  pd$value <- inverse_scale(var, pd$value_scaled)
+  pd$variable <- var
+  return(pd)
+})
+
+label_map <- c(
+  aspect = "Aspect (°)",
+  bot_salin = "Bottom Salinity (PSU)",
+  bot_temp = "Bottom Temperature (°C)",
+  topographic_position_index = "Topographic Position Index"
+)
+
+facet_labels <- labeller(variable = as_labeller(label_map))
+
+ggplot(pdp_df, aes(x = value, y = yhat)) +
+  geom_line(size = 1, color = "#0072B2") +
+  facet_wrap(~ variable, scales = "free_x", labeller = facet_labels) +
+  labs(
+    x = "Predictor Value",
+    y = "Partial Dependence (Predicted Probability)",
+    title = "Partial Dependence Plots for Environmental Variables"
+  ) +
+  theme_minimal(base_size = 14)
+
+```
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(ggpubr)
+
+# Set path to your folder of CSVs
+folder_path <- "/Users/lizamaguire/Desktop/final model comparisson results/combined metrics data"
+
+# Get list of all CSV files in the folder
+csv_files <- list.files(path = folder_path, pattern = "*.csv", full.names = TRUE)
+
+# Read and combine all CSVs
+combined_data <- csv_files %>%
+  lapply(read_csv) %>%
+  bind_rows()
+
+combined_metrics_plot = ggplot(combined_data, aes(x = model, y = mean, fill = model)) +
+  geom_boxplot() +
+  facet_wrap(~ .metric, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Model Performance Comparison",
+       x = "Model", y = "Metric Value")
+
+```
+
+```{r}
+# Filter just tss rows
+tss_data <- combined_data %>% filter(.metric == "tss")
+
+# Ensure correct data types
+tss_data$model <- as.factor(tss_data$model)
+tss_data$mean <- as.numeric(tss_data$mean)
+
+# Run ANOVA
+aov_tss <- aov(mean ~ model, data = tss_data)
+summary(aov_tss)
+
+# Optional: Post-hoc test
+TukeyHSD(aov_tss)
+
+```
+
+```{r}
+# Filter just tss rows
+roc_data <- combined_data %>% filter(.metric == "roc_auc")
+
+# Ensure correct data types
+roc_data$model <- as.factor(roc_data$model)
+roc_data$mean <- as.numeric(roc_data$mean)
+
+# Run ANOVA
+aov_roc <- aov(mean ~ model, data = roc_data)
+summary(aov_roc)
+
+# Optional: Post-hoc test
+TukeyHSD(aov_roc)
+
+```

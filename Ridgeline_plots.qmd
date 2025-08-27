@@ -1,0 +1,162 @@
+---
+title: "Ridgeplots"
+format: html
+editor: visual
+---
+
+## Creating Ridgeplots
+
+```{r}
+source("Setup.R")
+
+ridgeline_data = read_csv("~/Desktop/Thesis_data/ridgeline_plot_data.csv")
+
+model_dir <- "~/Desktop/Thesis_work/SDM products/SDM_gam_model_objects"  # update as needed
+model_files <- list.files(model_dir, pattern = "\\.rds$", full.names = TRUE)
+
+species_models <- lapply(model_files, readRDS)
+names(species_models) <- gsub("_GAM", "", file_path_sans_ext(basename(model_files)))  # clean names
+
+#SSP 2 - RCP 4.5
+ssp245_2020_layers <- load_bioOracle_layers("ssp245", "2020", path, db)
+ssp245_2030_layers <- load_bioOracle_layers("ssp245", "2030", path, db)
+ssp245_2040_layers <- load_bioOracle_layers("ssp245", "2040", path, db)
+ssp245_2050_layers <- load_bioOracle_layers("ssp245", "2050", path, db)
+ssp245_2060_layers <- load_bioOracle_layers("ssp245", "2060", path, db)
+ssp245_2070_layers <- load_bioOracle_layers("ssp245", "2070", path, db)
+ssp245_2080_layers <- load_bioOracle_layers("ssp245", "2080", path, db)
+ssp245_2090_layers <- load_bioOracle_layers("ssp245", "2090", path, db)
+
+#SSP 5 - RCP 8.5
+ssp585_2020_layers <- load_bioOracle_layers("ssp585", "2020", path, db)
+ssp585_2030_layers <- load_bioOracle_layers("ssp585", "2030", path, db)
+ssp585_2040_layers <- load_bioOracle_layers("ssp585", "2040", path, db)
+ssp585_2050_layers <- load_bioOracle_layers("ssp585", "2050", path, db)
+ssp585_2060_layers <- load_bioOracle_layers("ssp585", "2060", path, db)
+ssp585_2070_layers <- load_bioOracle_layers("ssp585", "2070", path, db)
+ssp585_2080_layers <- load_bioOracle_layers("ssp585", "2080", path, db)
+ssp585_2090_layers <- load_bioOracle_layers("ssp585", "2090", path, db)
+
+layers <- list(
+  "SSP2-4.5" = list(
+    "2020" = ssp245_2020_layers,
+    "2030" = ssp245_2030_layers,
+    "2040" = ssp245_2040_layers,
+    "2050" = ssp245_2050_layers,
+    "2060" = ssp245_2060_layers,
+    "2070" = ssp245_2070_layers,
+    "2080" = ssp245_2080_layers,
+    "2090" = ssp245_2090_layers
+  ),
+  "SSP5-8.5" = list(
+    "2020" = ssp585_2020_layers,
+    "2030" = ssp585_2030_layers,
+    "2040" = ssp585_2040_layers,
+    "2050" = ssp585_2050_layers,
+    "2060" = ssp585_2060_layers,
+    "2070" = ssp585_2070_layers,
+    "2080" = ssp585_2080_layers,
+    "2090" = ssp585_2090_layers
+  )
+)
+```
+
+```{r}
+# Step 2: Define scenarios and decades
+scenarios <- names(layers)
+decades <- names(layers[[1]])
+
+# Step 3: Initialize combined data storage
+ridge_data_all <- data.frame()
+
+# Step 4: Loop through all combinations
+for (species_name in names(species_models)) {
+  model <- species_models[[species_name]]
+  
+  for (scenario in scenarios) {
+    for (decade in decades) {
+      
+      message(paste("Processing", species_name, "-", scenario, "-", decade))
+      
+      current_layers <- layers[[scenario]][[decade]]
+      
+      # Predict suitability
+      prediction <- predict_raster(model, newdata = current_layers, type = "response")
+      suitability_vals <- as.vector(prediction[[1]])
+      
+      # Replace this with your actual variable name if needed
+      if (!"bot_temp" %in% names(current_layers)) {
+        stop("Bottom temperature layer ('bot_temp') not found in current decade layers.")
+      }
+      bot_temp_vals <- as.vector(current_layers[["bot_temp"]])
+      
+      # Filter out NA
+      keep <- !is.na(suitability_vals) & !is.na(bot_temp_vals)
+      df <- data.frame(
+        species = species_name,
+        scenario = scenario,
+        decade = as.numeric(decade),
+        suitability = suitability_vals[keep],
+        bot_temp = bot_temp_vals[keep]
+      )
+      
+      # Sort and extract top/bottom 20%
+n <- nrow(df)
+df_sorted <- df[order(df$suitability, decreasing = TRUE), ]
+
+top_20 <- df_sorted[1:round(0.2 * n), ]
+bottom_20 <- df_sorted[(n - round(0.2 * n) + 1):n, ]
+
+# ✅ Make sure species is carried through
+top_20$group <- "Top 20%"
+bottom_20$group <- "Bottom 20%"
+
+# ✅ Combine with ridge_data_all
+ridge_data_all <- bind_rows(ridge_data_all, top_20, bottom_20)
+
+write_csv(ridge_data_all, "~/Desktop/Thesis_data/ridgeline_plot_data")
+    }
+  }
+}
+```
+
+```{r}
+ggplot(ridgeline_data, aes(x = bot_temp, y = factor(decade), fill = group)) +
+  geom_density_ridges(alpha = 0.6, scale = 1.2, color = "white") +
+  facet_grid(species ~ scenario) +
+  scale_fill_manual(values = c("Top 20%" = "#1b9e77", "Bottom 20%" = "#d95f02")) +
+  labs(
+    title = "Bottom Temperature Distributions by Suitability (Top vs Bottom 20%)",
+    x = "Bottom Temperature (°C)",
+    y = "Decade",
+    fill = "Suitability Group"
+  ) +
+  theme_minimal(base_size = 12)
+
+```
+
+```{r}
+unique_species <- unique(ridgeline_data$species)
+
+for (sp in unique_species) {
+  plot_data <- ridgeline_data %>% filter(species == sp)
+  
+  p <- ggplot(plot_data, aes(x = bot_temp, y = factor(decade), fill = group)) +
+    geom_density_ridges(alpha = 0.6, scale = 1.2, color = "white") +
+    facet_wrap(~ scenario) +
+    scale_fill_manual(values = c("Top 20%" = "#1b9e77", "Bottom 20%" = "#d95f02")) +
+    labs(
+      title = paste("Bottom Temp Distribution:", sp),
+      x = "Bottom Temperature (°C)",
+      y = "Decade",
+      fill = "Suitability Group"
+    ) +
+    theme_minimal(base_size = 12)
+  
+  print(p)  # Display in viewer
+  
+  # Save if desired
+ggsave(paste0("~/Desktop/Thesis_work/ridgeplot_", sp, ".png"), plot = p, width = 10, height = 6, dpi = 300)
+
+}
+```

@@ -1,0 +1,147 @@
+---
+title: "tidy_workflow_gam"
+format: html
+editor: visual
+---
+
+## Tidy models (GAMs only)
+
+Modified tidymodels workflow not using workflow set
+
+```{r}
+source("Setup.R")
+remotes::install_github("BigelowLab/biooracle")
+suppressPackageStartupMessages({
+  library(biooracle)
+  library(dplyr)
+})
+set_biooracle_root("/Users/lizamaguire/Desktop/Thesis_data/Biooraclev3")
+```
+
+You can add options to executable code like this
+
+```{r}
+vars = read_config()
+sdm_data = read_DMR() |> cleanup_DMR() |> pa_species2(species = vars$species[1])
+```
+
+```{r}
+bb = get_bb()
+env = read_sdmpredictors(bb = bb) 
+#values = st_extract(env, sdm_data) |> st_drop_geometry() |> as_tibble()
+#data = bind_cols(sdm_data, values) |> relocate(geometry, .after = last_col())
+#ix = is.na(data$pa)
+#data = data |> filter(!ix)
+```
+
+```{r}
+gulf_of_maine_poly=get_poly()
+```
+
+```{r}
+env <- st_crop(env, gulf_of_maine_poly)
+env <- env[gulf_of_maine_poly]
+plot(env)
+```
+
+```{r}
+#input_data <- dplyr::select(pa, all_of(c("pa", "bot_temp_mean", "surf_temp_mean", "bot_sal_mean", "surf_sal_mean"))) |>
+  #mutate(pa = case_match(pa,
+  #  0 ~ "absence",
+   # 1 ~ "presence"
+ # ))
+
+```
+
+```{r}
+pa %>% 
+  dplyr::rename(pa,
+    bot_temp = bot_temp_mean,
+    bot_salin = bot_sal_mean,
+    surf_temp = surf_temp_mean,
+    surf_salin = surf_sal_mean
+  )
+
+names(pa)[5] <- "bot_temp_mean"
+names(pa)[6] <- "bot_sal_mean"
+names(pa)[7] <- "surf_temp_mean"
+names(pa)[8] <- "surf_sal_mean"
+```
+
+```{r}
+split_data = initial_split(pa |> na.omit() |> st_drop_geometry(), prop = 3/4, strata = "count") 
+training_data = training(split_data)
+testing_data = testing(split_data)
+
+testing_data$count <- factor(testing_data$count)
+training_data$count <- factor(training_data$count)
+```
+
+```{r}
+preproc_formula = count ~ bot_temp_mean + surf_temp_mean + bot_sal_mean + surf_sal_mean
+```
+
+```{r}
+model_formula = count ~ s(bot_temp_mean, k = 4) + s(surf_temp_mean, k = 4) + s(bot_sal_mean, k = 4) + s(surf_sal_mean, k = 4)
+```
+
+```{r}
+gulf_of_maine_rec <- recipe(
+  preproc_formula,
+  training_data |> head()) |> #only need to give a template of data when making recipe
+  step_normalize(all_predictors())
+# The species occurrence data
+                     # Formula specifying presence-absence (`pa`) as the outcome, and all other columns as predictors
+  #predictors = env,         # Environmental predictors (already passed as a raster stack)
+  #presence_only = FALSE                  # Set to FALSE for presence-absence data"
+ # step_log(all_of("surf_sal_mean"))
+```
+
+```{r}
+model = sdm_spec_gam(mode = "classification", engine = "mgcv")
+```
+
+```{r}
+gam = gam(model_formula, 
+               family = binomial(),
+               data = training_data)
+```
+
+```{r}
+wflow = workflow() |> 
+  add_recipe(gulf_of_maine_rec) |>
+  add_model(model, formula = model_formula)
+```
+
+```{r}
+training_data$count <- factor(training_data$count)
+
+fitted_wflow = fit(wflow, training_data)
+```
+
+```{r}
+train_pred = predict_table(fitted_wflow, training_data, type = "prob")
+train_pred
+```
+
+```{r}
+pred = predict(fitted_wflow, testing_data, type = "prob") |> 
+  mutate(.pred_class = ifelse(count >= 0.5, "absence", "presence") |> 
+           factor(levels = c("presence", "absence")), 
+         class = testing_data$count |>
+            factor(levels = c("presence", "absence")))
+
+
+pred <- predict(fitted_wflow, testing_data, type = "prob") |> 
+  mutate(
+    .pred_class = ifelse(.pred_count >= 0.5, "absence", "presence") |> 
+      factor(levels = c("presence", "absence")), 
+    class = testing_data$count |> 
+      ifelse(testing_data$count >= 0.5, "absence", "presence") |> 
+      factor(levels = c("presence", "absence"))
+  )
+```
+
+```{r}
+x = conf_mat(pred, class, .pred_class)
+```

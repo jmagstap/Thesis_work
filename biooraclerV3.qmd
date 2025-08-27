@@ -1,0 +1,81 @@
+---
+title: "biooraclerV3"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+source("Setup.R")
+set_biooracle_root("/Users/lizamaguire/Desktop/Thesis_data/Biooraclev3")
+```
+
+You can add options to executable code like this
+
+```{r}
+gom_path = biooracle_path("gom") |> make_path()
+biooracle_path() |> dir(full.names = TRUE)
+```
+
+```{r}
+layers = list_layers() |> 
+  readr::write_csv("/Users/lizamaguire/Desktop/Thesis_data/Biooraclev3/biooracle_layers.csv")
+```
+
+```{r}
+dataset_id = "thetao_ssp119_2020_2100_depthmin"
+newfile = fetch_biooracle(dataset_id, 
+                          bb = get_poly())
+```
+
+```{r}
+dataset_id = "thetao_baseline_2000_2019_depthmean"
+newfile = fetch_biooracle(dataset_id,
+                          bb=get_poly())
+```
+
+```{r}
+x = stars::read_stars(newfile, quiet = TRUE)
+x
+```
+
+```{r}
+dataset_id = c("ssp585_2050_depthmean_thetao_mean.tif")
+newfile = fetch_biooracle(dataset_id, 
+                          bb = get_poly(),
+                          archive = TRUE, 
+                          data_dir = path)
+```
+
+```{r}
+x = surfsal_db |>
+  dplyr::mutate(year = as.numeric(year)) |>
+  dplyr::filter(year >= 2070) |>
+  read_biooracle(, path = large_poly_surfsal_path) |>
+  print()
+```
+
+```{r}
+plot(x['thetao_mean'])
+coast = read_coast()
+```
+
+```{r}
+ggplot() +
+geom_stars(data = x['thetao_mean'] |> dplyr::slice("time", 3)) + 
+  geom_sf(data = coast)
+```
+
+```{r}
+ggplot() +
+geom_stars(data = x['thetao_mean']) + 
+  geom_sf(data = coast) +
+  facet_wrap(~time) 
+```

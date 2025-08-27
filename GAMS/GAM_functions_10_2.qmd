@@ -1,0 +1,538 @@
+---
+title: "pres/abs GAMS 10_2"
+format: html
+editor: visual
+---
+
+Load libraries
+
+```{r}
+source("GAM_setup.R")
+```
+
+Logistic regression compared to gam
+
+```{r}
+library(mgcv)  # For GAM
+library(pROC)  # For ROC-AUC
+temp_data <- read.csv("/Users/lizamaguire/Desktop/Thesis_data/Current_data_files_10_21/temp_no_zero.csv")
+
+temp_data$Number_Caught <- as.numeric(temp_data$Number_Caught)
+  temp_data <- temp_data %>%
+    mutate(species_presence = ifelse(Common_Name == "Haddock" & Number_Caught > 0, 1, 0))
+
+
+# Fit the GAM model
+gam_model_temp <- gam(species_presence ~ s(Bottom.Temperature, k = 5), family = binomial(), data = temp_data)
+
+# Summary of the GAM model
+summary(gam_model_temp)
+
+
+# Fit the logistic regression model
+logistic_model_temp <- glm(species_presence ~ Bottom.Temperature, family = binomial(), data = temp_data)
+
+# Summary of the logistic regression model
+summary(logistic_model_temp)
+
+# Calculate AIC for both models
+gam_aic <- AIC(gam_model_temp)
+logistic_aic <- AIC(logistic_model_temp)
+
+cat("AIC for GAM model:", gam_aic, "\n")
+cat("AIC for Logistic Regression model:", logistic_aic, "\n")
+
+# Calculate predictions for ROC-AUC comparison
+gam_predictions <- predict(gam_model_temp, type = "response")
+logistic_predictions <- predict(logistic_model_temp, type = "response")
+
+# Compute ROC and AUC for GAM
+roc_gam <- roc(temp_data$species_presence, gam_predictions)
+cat("GAM ROC-AUC:", auc(roc_gam), "\n")
+
+# Compute ROC and AUC for logistic regression
+roc_logistic <- roc(temp_data$species_presence, logistic_predictions)
+cat("Logistic Regression ROC-AUC:", auc(roc_logistic), "\n")
+
+
+```
+
+Temperature GAM function
+
+```{r}
+#temp gam function
+get_temp_gam <- function(data, species_name, temp_file_path) {
+  temp_data <- read.csv(temp_file_path)
+  temp_data$Number_Caught <- as.numeric(temp_data$Number_Caught)
+  temp_data <- temp_data %>%
+    mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0))
+  temp_gam_model <- gam(species_presence ~ s(Bottom.Temperature, k = 20), 
+                   family = binomial(), data = temp_data)
+  print(summary(gam_model))
+  species_temp_viz_model <- getViz(gam_model)
+  temp_plot_result <- plot(sm(species_temp_viz_model, 1)) + 
+    l_fitLine() +                      # Add the fitted line
+    l_ciPoly(fill = "blue", alpha = 0.2) +  # Add the shaded confidence interval
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  # Add a dotted line at zero
+    l_rug() +  
+    theme_minimal() +
+    labs(x = "Bottom Temperature (°C)", y = paste("Probability of Suitability for", species_name))  # Add axis titles
+  return(list(model = temp_gam_model, plot = plot_result))
+}
+
+```
+
+Salinity GAM function
+
+```{r}
+sal_data <- read.csv("/Users/lizamaguire/Desktop/R_data/No zero data/salinity_no_zero.csv")
+get_sal_gam <- function(data, species_name, sal_file_path) {
+  sal_data <- read.csv(sal_file_path)
+  sal_data$Number_Caught <- as.numeric(sal_data$Number_Caught)
+sal_data <- sal_data %>%
+  mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0))
+range(sal_data$Bottom.Salinity, na.rm = TRUE)
+sal_gam_model <- gam(species_presence ~ s(Bottom.Salinity, k = 10), family = binomial(), data = sal_data)
+summary(sal_gam_model)
+species_sal_viz_model <- getViz(sal_gam_model)
+sal_plot_result <- plot(sm(species_sal_viz_model, 1)) + 
+  l_fitLine() +                      # Add the fitted line
+  l_ciPoly(fill = "blue", alpha = 0.2) +  # Add the shaded confidence interval
+  geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  # Add a dotted line at zero
+  l_rug() +                          # Add the rug plot
+  theme_minimal() +
+  labs(x = "Bottom salinity (ppt)", y = paste("Probability of Suitability for", species_name)) 
+return(list(model = sal_gam_model, plot = sal_plot_result))
+}
+```
+
+```{r}
+sal_data <- read.csv("/Users/lizamaguire/Desktop/R_data/No zero data/salinity_no_zero.csv")
+
+  sal_data$Number_Caught <- as.numeric(sal_data$Number_Caught)
+sal_data <- sal_data %>%
+  mutate(species_presence = ifelse(Common_Name == "Haddock" & Number_Caught > 0, 1, 0))
+range(sal_data$Bottom.Salinity, na.rm = TRUE)
+sal_gam_model <- gam(species_presence ~ s(Bottom.Salinity, k = 10), family = binomial(), data = sal_data)
+summary(sal_gam_model)
+species_sal_viz_model <- getViz(sal_gam_model)
+sal_plot_result <- plot(sm(species_sal_viz_model, 1)) + 
+  l_fitLine() +                      # Add the fitted line
+  l_ciPoly(fill = "blue", alpha = 0.2) +  # Add the shaded confidence interval
+  geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  # Add a dotted line at zero
+  l_rug() +                          # Add the rug plot
+  theme_minimal() +
+  labs(x = "Bottom salinity (ppt)", y = paste("Probability of Suitability for", species_name)) 
+get_sal_gam(data, "Alewife",
+                          
+                        )
+
+gam.check(sal_gam_model)
+
+```
+
+Depth GAM function
+
+```{r}
+get_depth_gam <- function (species_name, depth_file_path) {
+depth_data <- read.csv(depth_file_path)
+depth_data <- depth_data %>%
+  mutate(
+    Number_Caught = as.numeric(Number_Caught),
+    species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0)
+  )
+depth_gam_model <- gam(species_presence ~ s(Depth, k = 20), data = depth_data, family = binomial())
+summary(depth_gam_model)
+depth_viz_model <- getViz(depth_gam_model)
+depth_plot_result <- plot(sm(depth_viz_model, 1)) + 
+  l_fitLine() +  
+  l_ciPoly(fill = "blue", alpha = 0.2) + 
+  geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  
+  l_rug() + 
+  theme_minimal() +
+  xlim(0, 150) +
+  labs(x = "Depth", y = paste("Probability of Suitability for", species_name)) 
+return(list(model = depth_gam_model, plot = depth_plot_result))
+}
+
+output_directory <- "/Users/lizamaguire/Desktop/R_data/GAM model photos"
+depth_gam <- get_depth_gam("Haddock",
+                          "/Users/lizamaguire/Desktop/R_data/No zero data/depth_no_zero.csv")
+
+# Print plots to R console (optional)
+print(depth_gam)
+```
+
+```{r}
+depth <- read.csv("/Users/lizamaguire/Desktop/R_data/No zero data/depth_no_zero.csv")
+```
+
+Tow Length GAM function
+
+```{r}
+towlength_data <- read.csv("/Users/lizamaguire/Desktop/R_data/CSV files/Updated MeDMR data 10_10.csv")
+
+get_towlength_gam <- function(species_name, towlength_file_path, output_directory) {
+  towlength_data <- read.csv(towlength_file_path)
+  towlength_data <- towlength_data %>%
+    mutate(
+      Number_Caught = as.numeric(Number_Caught),
+      Tow.length..nautical.miles. = as.numeric(Tow.length..nautical.miles.),
+      species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0)
+    )
+  towlength_data <- towlength_data %>%
+  filter(Tow.length..nautical.miles. >= 0.26 & Tow.length..nautical.miles. <= 1.25)
+  towlength_gam_model <- gam(species_presence ~ s(Tow.length..nautical.miles., k = 20), 
+                              data = towlength_data, family = binomial())
+  print(summary(towlength_gam_model))
+  towlength_viz_model <- getViz(towlength_gam_model)
+  towlength_plot_result <- plot(sm(towlength_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  
+    l_rug() + 
+    theme_minimal() +
+    labs(x = NULL, y = NULL) 
+  
+  png(filename = file.path(output_directory, paste0(species_name, "_towLength_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(towlength_plot_result)  # Use print to render the plot to the device
+  dev.off()  # Close the device
+  # Return the model and the correct plot
+  return(list(model = towlength_gam_model, plot = towlength_plot_result))
+}
+
+# Call the function for "Cod Atlantic"
+output_directory <- "/Users/lizamaguire/Desktop/R_data/GAM model photos/towlength"
+towlength_gam_model <- get_towlength_gam("Hake Atlantic Red", 
+                                           "/Users/lizamaguire/Desktop/R_data/CSV files/Updated MeDMR data 10_10.csv", 
+"/Users/lizamaguire/Desktop/R_data/GAM model photos/towlength")
+
+# Display the plot
+print(towlength_gam_model$plot)
+```
+
+Tow time GAM function
+
+```{r}
+towtime_data <- read.csv("/Users/lizamaguire/Desktop/R_data/CSV files/Updated MeDMR data 10_10.csv")
+
+towtime_data <- towtime_data %>%
+  mutate(
+    Tow.time..mins. = as.numeric(sub(".*:", "", Tow.time..mins.))  
+  )
+get_towtime_gam <- function (species_name, towtime_file_path, output_dir) {
+  towlength_data <- read.csv(towtime_file_path)
+  towtime_data <- towtime_data %>%
+    mutate(
+      Number_Caught = as.numeric(Number_Caught),
+      species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0)
+    )
+  towtime_gam_model <- gam(species_presence ~ s(Tow.time..mins., k = 5), 
+                           data = towtime_data, family = binomial())
+  print(summary(towtime_gam_model))
+  towtime_viz_model <- getViz(towtime_gam_model)
+  towtime_plot_result <- plot(sm(towtime_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  
+    l_rug() + 
+    theme_minimal() +
+    labs(x = "Tow time (mins)", y = paste("Probability of Suitability for", species_name))
+  return(list(model = towtime_gam_model, plot = towtime_plot_result))
+}
+
+towtime_gam_model <- get_towtime_gam("Haddock", 
+                                     "/Users/lizamaguire/Desktop/R_data/CSV files/Updated MeDMR data 10_10.csv")
+print(towtime_gam_model$plot)
+
+```
+
+Return all GAMs for specified species k= 5, larger font
+
+```{r}
+library(mgcv)
+library(dplyr)
+library(mgcViz)
+library(ggplot2)
+
+get_all_gams <- function(data, species_name, temp_file_path, sal_file_path, depth_file_path, output_dir) {
+  # Initialize a list to store models and plots
+  results <- list()
+  
+  # =====================
+  # Temperature GAM
+  # =====================
+  temp_data <- read.csv(temp_file_path)
+  temp_data$Number_Caught <- as.numeric(temp_data$Number_Caught)
+  temp_data <- temp_data %>%
+    mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0)) 
+  
+  # Fit the GAM model
+  temp_gam_model <- gam(species_presence ~ s(Bottom.Temperature, k = 5), family = binomial(), data = temp_data)
+  results$temp_model <- temp_gam_model
+  print(summary(temp_gam_model))
+
+  # Visualization for Temperature
+  temp_viz_model <- getViz(temp_gam_model)
+  temp_plot_result <- plot(sm(temp_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") + 
+    l_rug() +  
+    labs(y = NULL, x = NULL)+
+    theme_minimal() +
+    theme(text = element_text(size = 25))
+
+
+    # Save the temperature plot
+  # Save the temperature plot as a PNG file
+  png(filename = file.path(output_dir, paste0(species_name, "_temp_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(temp_plot_result)  # Use print to render the plot to the device
+  dev.off()  # Close the device
+  
+  results$temp_plot <- temp_plot_result
+  
+  # =====================
+  # Salinity GAM
+  # =====================
+  sal_data <- read.csv(sal_file_path)
+  sal_data$Number_Caught <- as.numeric(sal_data$Number_Caught)
+  sal_data <- sal_data %>%
+    mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0))
+  
+  sal_gam_model <- gam(species_presence ~ s(Bottom.Salinity, k = 5), family = binomial(), data = sal_data)
+  results$sal_model <- sal_gam_model
+  print(summary(sal_gam_model))
+
+  # Visualization for Salinity
+  sal_viz_model <- getViz(sal_gam_model)
+  sal_plot_result <- plot(sm(sal_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") + 
+    l_rug() +  
+    labs(y = NULL, x = NULL) +
+    theme_minimal() +
+    theme(text = element_text(size = 25))
+  
+    # Save the salinity plot
+  # Save the salinity plot as a PNG file
+ 
+   png(filename = file.path(output_dir, paste0(species_name, "_salinity_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(sal_plot_result)  # Use print to render the plot to the device
+  dev.off()  # Close the device
+  results$sal_plot <- sal_plot_result
+  
+  # =====================
+  # Depth GAM
+  # =====================
+  depth_data <- read.csv(depth_file_path)
+  depth_data$Number_Caught <- as.numeric(depth_data$Number_Caught)
+  depth_data <- depth_data %>%
+    mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0))
+  depth_data <- depth_data %>%
+  filter(Depth <= 122)
+  
+  depth_gam_model <- gam(species_presence ~ s(Depth, k = 5), family = binomial(), data = depth_data)
+  results$depth_model <- depth_gam_model
+  print(summary(depth_gam_model))
+
+  # Visualization for Depth
+  depth_viz_model <- getViz(depth_gam_model)
+  depth_plot_result <- plot(sm(depth_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  
+    l_rug() +  
+    labs(y = NULL, x = NULL)+
+    theme_minimal() +
+    theme(text = element_text(size = 25))
+  
+    # Save the depth plot as a PNG file
+  png(filename = file.path(output_dir, paste0(species_name, "_depth_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(depth_plot_result)  # Use print to render the plot to the device
+  dev.off()  # Close the device
+  
+  results$depth_plot <- depth_plot_result
+
+  return(results)
+}
+```
+
+```{r}
+#Save all GAM photos to computer 
+output_directory <- "/Users/lizamaguire/Desktop/R_data/10_23_GAM_photos"
+all_gams <- get_all_gams(data, "Hake Atlantic Red",
+                          "/Users/lizamaguire/Desktop/Thesis_data/Current_data_files_10_21/temp_no_zero.csv",
+                          "/Users/lizamaguire/Desktop/Thesis_data/Current_data_files_10_21/salinity_no_zero.csv",
+                          "/Users/lizamaguire/Desktop/Thesis_data/Current_data_files_10_21/depth_no_zero.csv",
+                          output_directory)
+
+# Print plots to R console (optional)
+print(all_gams$temp_plot)
+print(all_gams$sal_plot)
+print(all_gams$depth_plot)
+print(all_gams$towlength_plot)
+```
+
+```{r}
+#vif values 
+# Check correlation between variables
+cor(haddock_data_clean[, c("Depth", "Bottom.Salinity", "Bottom.Temperature")], use = "complete.obs")
+
+
+library(car)
+no_zero_data <- read.csv("/Users/lizamaguire/Desktop/R_data/CSV files/Updated_Catch_data_7_23_NO_ZERO.csv")
+no_zero_data <- no_zero_data %>%
+  mutate(
+    Number_Caught = as.numeric(Number_Caught),
+    species_presence = ifelse(Common_Name == "Cod Atlantic" & Number_Caught > 0, 1, 0)
+  )
+haddock_data <- no_zero_data[no_zero_data$Common_Name == "Haddock", ]
+  
+linear_model <- lm(species_presence ~ Depth + Bottom.Salinity + Bottom.Temperature, data = haddock_data)
+
+# Calculate VIF for the linear model
+vif_values <- vif(linear_model)
+
+# Display VIF results
+print(vif_values)
+```
+
+```{r}
+#temperature over time FALL
+fall_temp_data <- temp_data %>%
+  filter(Season == "Fall")
+
+ggplot(fall_temp_data, aes(x = Year, y = Bottom.Temperature)) +  # Optional: Show points
+  geom_smooth(se = TRUE, color = "black", fill = "blue", alpha = 0.3) +
+  labs(
+       x = "Year", 
+       y = "Fall Bottom Temperature (°C)") +
+  ylim(5,8)
+  theme_minimal()
+
+
+  #temperature over time SPRING
+spring_temp_data <- temp_data %>%
+  filter(Season == "Spring")
+
+ggplot(spring_temp_data, aes(x = Year, y = Bottom.Temperature)) +  # Optional: Show points
+  geom_smooth(se = TRUE, color = "black", fill = "blue", alpha = 0.3) +
+  labs(
+       x = "Year", 
+       y = "Spring Bottom Temperature (°C)") +
+  xlim(2000, 2023)
+  theme_minimal()
+```
+
+Function for all GAMS k =20
+
+```{r}
+library(mgcv)
+library(dplyr)
+library(mgcViz)
+library(ggplot2)
+
+get_all_gams <- function(data, species_name, temp_file_path, sal_file_path, depth_file_path, output_dir) {
+  # Initialize a list to store models and plots
+  results <- list()
+  
+  # =====================
+  # Temperature GAM
+  # =====================
+  temp_data <- read.csv(temp_file_path)
+  temp_data$Number_Caught <- as.numeric(temp_data$Number_Caught)
+  temp_data <- temp_data %>%
+    mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0)) 
+  
+  # Fit the GAM model
+  temp_gam_model <- gam(species_presence ~ s(Bottom.Temperature, k = 20), family = binomial(), data = temp_data)
+  results$temp_model <- temp_gam_model
+  print(summary(temp_gam_model))
+
+  # Visualization for Temperature
+  temp_viz_model <- getViz(temp_gam_model)
+  temp_plot_result <- plot(sm(temp_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") + 
+    l_rug() +  
+    labs(y = NULL, x = NULL)+
+    theme_minimal() 
+
+
+    # Save the temperature plot
+  # Save the temperature plot as a PNG file
+  png(filename = file.path(output_dir, paste0(species_name, "_temp_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(temp_plot_result)  # Use print to render the plot to the device
+  dev.off()  # Close the device
+  
+  results$temp_plot <- temp_plot_result
+  
+  # =====================
+  # Salinity GAM
+  # =====================
+  sal_data <- read.csv(sal_file_path)
+  sal_data$Number_Caught <- as.numeric(sal_data$Number_Caught)
+  sal_data <- sal_data %>%
+    mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0))
+  
+  sal_gam_model <- gam(species_presence ~ s(Bottom.Salinity, k = 10), family = binomial(), data = sal_data)
+  results$sal_model <- sal_gam_model
+  print(summary(sal_gam_model))
+
+  # Visualization for Salinity
+  sal_viz_model <- getViz(sal_gam_model)
+  sal_plot_result <- plot(sm(sal_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") + 
+    l_rug() +  
+    labs(y = NULL, x = NULL) +
+    theme_minimal()
+
+  
+    # Save the salinity plot
+  # Save the salinity plot as a PNG file
+ 
+   png(filename = file.path(output_dir, paste0(species_name, "_salinity_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(sal_plot_result)  # Use print to render the plot to the device
+  dev.off()  # Close the device
+  results$sal_plot <- sal_plot_result
+  
+  # =====================
+  # Depth GAM
+  # =====================
+  depth_data <- read.csv(depth_file_path)
+  depth_data$Number_Caught <- as.numeric(depth_data$Number_Caught)
+  depth_data <- depth_data %>%
+    mutate(species_presence = ifelse(Common_Name == species_name & Number_Caught > 0, 1, 0))
+  depth_data <- depth_data %>%
+  filter(Depth <= 122)
+  
+  depth_gam_model <- gam(species_presence ~ s(Depth, k = 20), family = binomial(), data = depth_data)
+  results$depth_model <- depth_gam_model
+  print(summary(depth_gam_model))
+
+  # Visualization for Depth
+  depth_viz_model <- getViz(depth_gam_model)
+  depth_plot_result <- plot(sm(depth_viz_model, 1)) + 
+    l_fitLine() +  
+    l_ciPoly(fill = "blue", alpha = 0.2) + 
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  
+    l_rug() +  
+    labs(y = NULL, x = NULL)+
+    theme_minimal() 
+  
+    # Save the depth plot as a PNG file
+  png(filename = file.path(output_dir, paste0(species_name, "_depth_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(depth_plot_result)  # Use print to render the plot to the device
+  dev.off()  # Close the device
+  
+  results$depth_plot <- depth_plot_result
+  
+  # Return the results list containing models and plots
+  return(results)
+}
+```

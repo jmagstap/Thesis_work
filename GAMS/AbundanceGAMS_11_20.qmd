@@ -1,0 +1,326 @@
+---
+title: "Abundance_gams_11_20"
+format: html
+editor: visual
+---
+
+## Abundance GAMS
+
+```{r message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+```{r}
+source("GAM_setup.R")
+```
+
+```{r}
+#get data for all GAMs function
+get_GAM_data = function(data_path){
+  data <- readxl::read_excel(data_path)
+  data$ScaledAbundance <- round(data$ScaledAbundance)
+  data <- data[data$ScaledAbundance != 0, ]
+  return(data)
+}
+#call data for all GAMs function
+data = get_GAM_data("/Users/lizamaguire/Desktop/Thesis_data/Maine_DMR/11_20_abundance_DMR_data.xlsx")
+```
+
+```{r}
+#correlation plot for env variables
+env_corrplot = corrplot(cor(data[, c("BottomTemperature", "BottomSalinity", "Startdepth")]), method = "circle")
+```
+
+```{r}
+#get species specific data function
+get_GAM_spp_data = function(species, data){
+  species_data <- data[data$Common_Name == species, ]
+  
+  # Return the filtered data
+  return(species_data)
+}
+```
+
+Call functions for species-specific data
+
+```{r}
+#Haddock
+Haddock_data = get_GAM_spp_data("Haddock", data)
+#Cod
+Cod_data = get_GAM_spp_data("Cod Atlantic", data)
+#red hake 
+red_hake_data = get_GAM_spp_data("Hake Atlantic Red", data)
+#jonah crab
+jonah_crab_data = get_GAM_spp_data("Crab Jonah", data)
+#alewife
+alewife_data = get_GAM_spp_data("Alewife", data)
+#winter flounder
+winter_flounder_data = get_GAM_spp_data("Flounder Winter", data)
+#pollock
+pollock_data = get_GAM_spp_data("Pollock", data)
+#silver hake
+silver_hake_data = get_GAM_spp_data("Hake Silver (Whiting)", data)
+#lobster
+lobster_data = get_GAM_spp_data("Lobster American", data)
+#atlantic herring
+atlantic_herring_data = get_GAM_spp_data("Herring Atlantic", data)
+#plaice
+plaice_data = get_GAM_spp_data("Plaice American (Dab)", data)
+#blueback herring
+blueback_herring_data = get_GAM_spp_data("Herring Blueback", data)
+#white hake
+white_hake_data = get_GAM_spp_data("Hake White", data)
+```
+
+```{r}
+gam_sdm_model <- gam(
+  ScaledAbundance ~ s(BottomTemperature, k = 4),  # Splines for BottomTemperature
+  family = nb(link = "log"),  # Negative Binomial distribution with log link
+  data = Haddock_data  # Your dataset
+)
+```
+
+```{r}
+glm_sdm_model <- glm(
+  ScaledAbundance ~ BottomTemperature, 
+  data = Haddock_data, 
+  family = poisson(link = "log")
+)
+```
+
+```{r}
+library(randomForest)
+rf_sdm_model <- randomForest(
+  ScaledAbundance ~ BottomTemperature,
+  data = Haddock_data,
+  importance = TRUE)
+```
+
+```{r}
+brt_sdm_model <- gbm(
+  formula = ScaledAbundance ~ BottomTemperature,
+  data = Haddock_data,
+  distribution = "gaussian",  # For continuous data (regression)
+  n.trees = 1000,             # Number of boosting iterations (trees)
+  interaction.depth = 3,      # Maximum tree depth (higher means more complex trees)
+  shrinkage = 0.01,           # Learning rate (smaller values mean slower learning)
+  cv.folds = 5,               # Cross-validation folds to evaluate performance
+  n.cores = 2,                # Number of cores to use (for parallel processing)
+  verbose = TRUE              # Display progress during training
+)
+
+```
+
+```{r}
+library(pROC)
+
+# Get predicted probabilities for each model
+glm_preds <- predict(glm_sdm_model, type = "response")
+gam_preds <- predict(gam_sdm_model, type = "response")
+rf_preds <- predict(rf_sdm_model, type = "response")
+gbm_preds <- predict(brt_sdm_model, type = "response", n.trees = 500)
+
+# Calculate AUC for each model
+glm_auc <- roc(Haddock_data$ScaledAbundance, glm_preds)
+gam_auc <- roc(Haddock_data$ScaledAbundance, gam_preds)
+rf_auc <- roc(Haddock_data$ScaledAbundance, rf_preds)
+gbm_auc <- roc(Haddock_data$ScaledAbundance, gbm_preds)
+
+# Display AUC results
+print(c(glm_auc$auc, gam_auc$auc, rf_auc$auc, gbm_auc$auc))
+```
+
+```{r}
+#temperature GAM function
+get_temp_GAM = function(df, species, output_dir) {
+temp_gam_model <- gam(
+  ScaledAbundance ~ s(BottomTemperature, k = 4),
+  family = nb(link = "log"),  # Negative Binomial 
+  data = df)
+temp_plot_summary = print(summary(temp_gam_model))
+temp_plot = plot(temp_gam_model)
+
+  species_temp_viz_model <- getViz(temp_gam_model)
+  temp_plot_result <- plot(sm(species_temp_viz_model, 1)) + 
+    l_fitLine() +                      # Add the fitted line
+    l_ciPoly(fill = "blue", alpha = 0.2) +  # Add the shaded confidence interval
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  # Add a dotted line at zero
+    l_rug() +  
+    theme_minimal() +
+    labs(x = NULL, y = NULL) +
+    coord_cartesian(xlim = c(2, 16.6)) +
+    theme_minimal() +
+        theme_minimal() +
+    theme(text = element_text(size = 25))
+  png(filename = file.path(output_dir, paste0(species, "_temp_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(temp_plot_result)  # Use print to render the plot to the device
+  dev.off()
+
+return (list(model = temp_plot_summary, plot = temp_plot_result)
+)}
+
+```
+
+```{r}
+#call temp GAM function
+#haddock
+get_temp_GAM(Haddock_data, "Haddock", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#cod
+get_temp_GAM(Cod_data, "Cod Atlantic", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#jonah crab
+get_temp_GAM(jonah_crab_data, "Crab Jonah", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#winter flounder
+get_temp_GAM(winter_flounder_data, "Flounder Winter", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#alewife
+get_temp_GAM(alewife_data, "Alewife", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#red hake
+get_temp_GAM(red_hake_data, "Hake Atlantic Red", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#pollock
+get_temp_GAM(pollock_data, "Pollock", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#silver hake
+get_temp_GAM(silver_hake_data, "Hake Silver (Whiting)", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#lobster
+get_temp_GAM(lobster_data, "Lobster American", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#atlantic herring
+get_temp_GAM(atlantic_herring_data, "Herring Atlantic", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#plaice
+get_temp_GAM(plaice_data, "Plaice American (Dab)", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#blueback herring
+get_temp_GAM(blueback_herring_data, "Herring Blueback", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+#white hake
+get_temp_GAM(white_hake_data, "Hake White", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Temperature")
+```
+
+```{r}
+#salinity GAM
+get_sal_GAM = function(df, species, output_dir) {
+sal_gam_model <- gam(
+  ScaledAbundance ~ s(BottomSalinity, k = 4),
+  family = nb(link = "log"),  # Negative Binomial
+  data = df)
+sal_plot_summary = summary(sal_gam_model)
+sal_plot = plot(sal_gam_model)
+species_sal_viz_model <- getViz(sal_gam_model)
+  sal_plot_result <- plot(sm(species_sal_viz_model, 1)) + 
+    l_fitLine() +                      # Add the fitted line
+    l_ciPoly(fill = "blue", alpha = 0.2) +  # Add the shaded confidence interval
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  # Add a dotted line at zero
+    l_rug() +  
+    theme_minimal() +
+    labs(x = NULL, y = NULL) +
+    coord_cartesian(xlim = c(15, 35)) +
+        theme_minimal() +
+    theme(text = element_text(size = 25))
+  png(filename = file.path(output_dir, paste0(species, "_sal_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(sal_plot_result)  # Use print to render the plot to the device
+  dev.off()
+
+return (list(model = sal_plot_summary, plot = sal_plot_result)
+)}
+```
+
+```{r}
+#call temp GAM function
+#haddock
+get_sal_GAM(Haddock_data, "Haddock", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#cod
+get_sal_GAM(Cod_data, "Cod Atlantic", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#jonah crab
+get_sal_GAM(jonah_crab_data, "Crab Jonah", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#winter flounder
+get_sal_GAM(winter_flounder_data, "Flounder Winter", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#alewife
+get_sal_GAM(alewife_data, "Alewife", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#red hake
+get_sal_GAM(red_hake_data, "Hake Atlantic Red", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#pollock
+get_sal_GAM(pollock_data, "Pollock", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#silver hake
+get_sal_GAM(silver_hake_data, "Hake Silver (Whiting)", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#lobster
+get_sal_GAM(lobster_data, "Lobster American", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#atlantic herring
+get_sal_GAM(atlantic_herring_data, "Herring Atlantic", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#plaice
+get_sal_GAM(plaice_data, "Plaice American (Dab)", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#blueback herring
+get_sal_GAM(blueback_herring_data, "Herring Blueback", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+#white hake
+get_sal_GAM(white_hake_data, "Hake White", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Salinity")
+```
+
+```{r}
+#depth GAM
+get_depth_GAM = function(df, species, output_dir) {
+depth_gam_model <- gam(
+  ScaledAbundance ~ s(Startdepth, k = 4),
+  family = nb(link = "log"),  # Negative Binomial
+  data = df)
+depth_plot_summary = summary(depth_gam_model)
+depth_plot = plot(depth_gam_model)
+species_depth_viz_model <- getViz(depth_gam_model)
+  depth_plot_result <- plot(sm(species_depth_viz_model, 1)) + 
+    l_fitLine() +                      # Add the fitted line
+    l_ciPoly(fill = "blue", alpha = 0.2) +  # Add the shaded confidence interval
+    geom_hline(yintercept = 0, linetype = "dotted", color = "red") +  # Add a dotted line at zero
+    l_rug() +  
+    coord_cartesian(xlim = c(5, 122)) +
+    theme_minimal() +
+    labs(x = NULL, y = NULL) +
+    theme_minimal() +
+        theme_minimal() +
+    theme(text = element_text(size = 25))
+  png(filename = file.path(output_dir, paste0(species, "_depth_gam_plot.png")),  width = 1600, height = 1200, res = 300)
+  print(depth_plot_result)  # Use print to render the plot to the device
+  dev.off()
+
+return (list(model = depth_plot_summary, plot = depth_plot_result)
+)}
+```
+
+```{r}
+#call depth GAM function
+#haddock
+get_depth_GAM(Haddock_data, "Haddock", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#cod
+get_depth_GAM(Cod_data, "Cod Atlantic", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#jonah crab
+get_depth_GAM(jonah_crab_data, "Crab Jonah", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#winter flounder
+get_depth_GAM(winter_flounder_data, "Flounder Winter", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#alewife
+get_depth_GAM(alewife_data, "Alewife", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#red hake
+get_depth_GAM(red_hake_data, "Hake Atlantic Red", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#pollock
+get_depth_GAM(pollock_data, "Pollock", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#silver hake
+get_depth_GAM(silver_hake_data, "Hake Silver (Whiting)", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#lobster
+get_depth_GAM(lobster_data, "Lobster American", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#atlantic herring
+get_depth_GAM(atlantic_herring_data, "Herring Atlantic", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#plaice
+get_depth_GAM(plaice_data, "Plaice American (Dab)", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#blueback herring
+get_depth_GAM(blueback_herring_data, "Herring Blueback", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+#white hake
+get_depth_GAM(white_hake_data, "Hake White", "/Users/lizamaguire/Desktop/Thesis_work/Thesis.figure.photos/Abundance.GAM.photos/Depth")
+```
+
+```{r}
+all_vars_gam <- function(data) {
+  gam_sdm_model <- gam(
+    ScaledAbundance ~ s(BottomTemperature, k = 4) + 
+                      s(BottomSalinity, k = 4) + 
+                      s(Startdepth, k = 4),  # Separate smooths for each variable
+    family = nb(link = "log"),  # Negative Binomial distribution with log link
+    data = data  # Input dataset
+  )
+  return(summary(gam_sdm_model))
+}
+```
+
+```{r}
+all_vars_gam(Cod_data)
+```

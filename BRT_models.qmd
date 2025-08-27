@@ -1,0 +1,171 @@
+---
+title: "BRT_SDMs"
+format: html
+editor: visual
+---
+
+## Boosted regression trees
+
+```{r}
+source("Setup.R")
+
+#load species data
+cod_sdm_data = as_tibble(load_species("Cod Atlantic")[[1]])
+haddock_sdm_data = as_tibble(load_species("Haddock")[[1]])
+winterflounder_sdm_data = as_tibble(load_species("Flounder Winter")[[1]])
+silverhake_sdm_data = as_tibble(load_species("Hake Silver (Whiting)")[[1]])
+lobster_sdm_data = as_tibble(load_species("Lobster American")[[1]])
+pollock_sdm_data = as_tibble(load_species("Pollock")[[1]])
+plaice_sdm_data = as_tibble(load_species("Plaice American (Dab)")[[1]])
+jonah_crab_sdm_data = as_tibble(load_species("Crab Jonah")[[1]])
+white_hake_sdm_data = as_tibble(load_species("Hake White")[[1]])
+red_hake_sdm_data = as_tibble(load_species("Hake Atlantic Red")[[1]])
+```
+
+```{r}
+brt_model <- gbm(
+  formula = pa ~ bot_temp + bot_salin + aspect + bot_ph + topographic_position_index,  # update with your variables
+  distribution = "bernoulli",  # binomial outcome
+  data = cod_sdm_data,
+  n.trees = 3000,
+  interaction.depth = 3,
+  shrinkage = 0.01,
+  bag.fraction = 0.5,
+  train.fraction = 0.8,
+  cv.folds = 5,
+  verbose = TRUE
+)
+
+`cod_train_data` <- as.data.frame(`cod_train_data`)
+# Clean up the response
+`cod_train_data`$pa <- as.numeric(as.character(`cod_train_data`$pa))
+
+
+cod_brt_data <- cod_train_data  # Keep a reference
+cod_brt <- gbm.step(
+  data = cod_train_data,
+  gbm.x = c("bot_temp", "bot_salin", "aspect", "bot_ph", "topographic_position_index"),
+  gbm.y = "pa",
+  family = "bernoulli",
+  tree.complexity = 3,
+  learning.rate = 0.01,
+  bag.fraction = 0.5
+)
+
+
+saveRDS(cod_brt, "~/Desktop/BRT_models/cod_brt_model.rds")
+
+brt_pred <- predict(cod_brt, newdata = cod_test_data, n.trees = cod_brt$n.trees, type = "response")
+
+# Observed values
+obs <- cod_brt_data$pa
+
+# Remove NA values
+valid <- !is.na(obs) & !is.na(pred)
+
+# ROC
+library(pROC)
+roc_obj <- roc(response = obs[valid], predictor = pred[valid])
+plot(roc_obj)
+auc(roc_obj)
+
+
+
+predicted_suitability <- predict_raster(
+  cod_brt,
+  newdata = ssp245_2080_layers,      # data.frame or raster stack with predictor_vars columns
+  n.trees = cod_brt$n.trees,
+  type = "response"
+)
+nbreaks = 200
+
+plot(predicted_suitability,
+     nbreaks = nbreaks,
+     col = hcl.colors(nbreaks-1, palette = "viridis"),
+     key.length = 1,
+     axes = TRUE)
+
+```
+
+```{r}
+# Get predictions
+gam_pred <- predict(cod_gam_model, newdata = cod_test_data, type = "response")
+glm_pred <- predict(cod_lrg_model, newdata = cod_test_data, type = "response")
+brt_pred <- predict(cod_brt, newdata = cod_test_data, n.trees = cod_brt$n.trees, type = "response")
+
+# Actual labels
+obs <- cod_test_data$pa
+
+# Compute ROC curves
+library(pROC)
+roc_gam  <- roc(obs, gam_pred)
+roc_glm  <- roc(obs, glm_pred)
+roc_brt  <- roc(obs, brt_pred)
+
+# Plot
+plot(roc_gam, col = "blue", lwd = 2, main = "Test Set ROC - Cod")
+plot(roc_glm, col = "green", lwd = 2, add = TRUE)
+plot(roc_brt, col = "red", lwd = 2, add = TRUE)
+legend("bottomright", legend = c(
+    paste("GAM (AUC =", round(auc(roc_gam), 3), ")"),
+    paste("GLM (AUC =", round(auc(roc_glm), 3), ")"),
+    paste("BRT (AUC =", round(auc(roc_brt), 3), ")")
+  ), col = c("green", "red", "blue"), lwd = 2, bty = "n")
+```
+
+```{r}
+# Species and their display names for loading
+species_list <- list(
+  "Cod Atlantic" = "cod",
+  "Haddock" = "haddock",
+  "Flounder Winter" = "winterflounder",
+  "Hake Silver (Whiting)" = "silverhake",
+  "Lobster American" = "lobster",
+  "Pollock" = "pollock",
+  "Plaice American (Dab)" = "plaice",
+  "Crab Jonah" = "jonah_crab",
+  "Hake White" = "white_hake",
+  "Hake Atlantic Red" = "red_hake"
+)
+
+# Set predictor columns to use
+predictor_vars <- c("bot_temp", "bot_salin", "aspect", "bot_ph", "topographic_position_index")
+
+# Initialize model storage
+brt_models <- list()
+
+# Loop over species
+for (common_name in names(species_list)) {
+  short_name <- species_list[[common_name]]
+  
+  message(paste("Processing:", common_name))
+  
+  # Load and prepare data
+  species_data <- as.data.frame(load_species(common_name)[[1]])  # convert tibble to data.frame
+  species_data$pa <- as.numeric(as.character(species_data$pa))
+  species_data <- na.omit(species_data)
+  
+  # Fit BRT model
+  try({
+    model <- gbm.step(
+      data = species_data,
+      gbm.x = predictor_vars,
+      gbm.y = "pa",
+      family = "bernoulli",
+      tree.complexity = 3,
+      learning.rate = 0.01,
+      bag.fraction = 0.5,
+      verbose = FALSE
+    )
+    
+    # Store in list
+    brt_models[[short_name]] <- model
+    
+    # Save model if you want
+    saveRDS(model, paste0("~/Desktop/BRT_models/", short_name, "_brt_model.rds"))
+    
+    message(paste("✅ Finished:", common_name))
+  }, silent = TRUE)
+}
+
+```

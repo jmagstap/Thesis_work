@@ -1,0 +1,51 @@
+---
+title: "VIF_sdm"
+format: html
+editor: visual
+---
+
+## VIF calculations to test collinearity between variables
+
+```{r}
+library(corrplot)
+library(car)
+#create environmental variables dataframe
+env_vars <- haddock_sdm_data %>%
+  dplyr::select(bot_temp, bot_salin, 
+         slope, bot_ph, topographic_position_index, aspect) |> st_drop_geometry() |> as_tibble()
+```
+
+```{r}
+#PCA 
+explanatory_clean <- env_vars[complete.cases(env_vars) & apply(env_vars, 1, function(row) all(is.finite(row))), ]
+explanatory_scaled <- scale(explanatory_clean)
+pca_result <- prcomp(explanatory_scaled, center = TRUE, scale. = TRUE)
+
+install.packages("factoextra")  # if not already installed
+library(factoextra)
+fviz_pca_biplot(pca_result, repel = TRUE)
+
+biplot(pca_result, scale = 0)
+```
+
+```{r}
+# Make correlation matrix, handling NAs
+cor_matrix <- cor(env_vars, use = "complete.obs")
+
+corrplot(cor_matrix, method = "number", type = "upper", 
+         tl.col = "black", tl.srt = 45, # Rotate the labels
+         col = colorRampPalette(c("blue", "white", "red"))(200))
+```
+
+```{r}
+#Concurvity (like VIF for GAMs) with all env variables
+library(car)
+concurvity(gam_sdm_model_reduced, full = TRUE)
+```
+
+Remove collinear variables
+
+```{r}
+env_vars <- env_vars %>%
+    dplyr::select(-slope)
+```

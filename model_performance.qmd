@@ -1,0 +1,225 @@
+---
+title: "model_performance"
+format: html
+editor: visual
+---
+
+## Testing model performance using "yardstick" package
+
+```{r}
+source("Setup.R")
+
+#load species data
+cod_sdm_data = as_tibble(load_species("Cod Atlantic")[[1]])
+haddock_sdm_data = as_tibble(load_species("Haddock")[[1]])
+winterflounder_sdm_data = as_tibble(load_species("Flounder Winter")[[1]])
+silverhake_sdm_data = as_tibble(load_species("Hake Silver (Whiting)")[[1]])
+lobster_sdm_data = as_tibble(load_species("Lobster American")[[1]])
+pollock_sdm_data = as_tibble(load_species("Pollock")[[1]])
+plaice_sdm_data = as_tibble(load_species("Plaice American (Dab)")[[1]])
+jonah_crab_sdm_data = as_tibble(load_species("Crab Jonah")[[1]])
+white_hake_sdm_data = as_tibble(load_species("Hake White")[[1]])
+red_hake_sdm_data = as_tibble(load_species("Hake Atlantic Red")[[1]])
+```
+
+```{r}
+plot_species_envvar(cod_sdm_data, bot_ph)
+```
+
+```{r}
+evaluate_species_models(`white_hake_sdm_data`, "white hake")
+
+
+aic_glm <- AIC(cod_glm_model)
+aic_gam <- AIC(cod_gam_model)
+
+# Print AIC values
+print(paste("GLM AIC:", aic_glm))
+print(paste("GAM AIC:", aic_gam))
+
+```
+
+```{r}
+
+`red hake_gam_model` <- mgcv::gam(
+pa ~ s(bot_temp, k = 4) + s(bot_salin, k = 4) + s(topographic_position_index, k = 4) + s(aspect, k = 4) + s(bot_ph, k = 4),
+family = binomial(link = "logit"),
+data = `red hake_train_data`)
+
+lobster_lrg_model <- glm(pa ~ bot_temp + bot_salin + bot_ph + aspect + topographic_position_index, family = binomial(link = "logit"), data = lobster_train_data)
+
+`lobster_train_data` <- as.data.frame(`lobster_train_data`)
+# Clean up the response
+`lobster_train_data`$pa <- as.numeric(as.character(`lobster_train_data`$pa))
+
+
+lobster_brt_data <- lobster_train_data  # Keep a reference
+lobster_brt <- gbm.step(
+  data = lobster_train_data,
+  gbm.x = c("bot_temp", "bot_salin", "aspect", "bot_ph", "topographic_position_index"),
+  gbm.y = "pa",
+  family = "bernoulli",
+  tree.complexity = 3,
+  learning.rate = 0.01,
+  bag.fraction = 0.5
+)
+saveRDS(lobster_brt, "~/Desktop/BRT_models/lobster_brt_model.rds")
+
+# Get predictions
+gam_pred <- predict(lobster_gam_model, newdata = lobster_test_data, type = "response")
+glm_pred <- predict(lobster_lrg_model, newdata = lobster_test_data, type = "response")
+brt_pred <- predict(lobster_brt, newdata = lobster_test_data, n.trees = lobster_brt$n.trees, type = "response")
+
+# Actual labels
+obs <- lobster_test_data$pa
+
+# Compute ROC curves
+library(pROC)
+roc_gam  <- roc(obs, gam_pred)
+roc_glm  <- roc(obs, glm_pred)
+roc_brt  <- roc(obs, brt_pred)
+
+# Plot
+plot(roc_gam, col = "blue", lwd = 2, main = "Test Set ROC - lobster")
+plot(roc_glm, col = "green", lwd = 2, add = TRUE)
+plot(roc_brt, col = "red", lwd = 2, add = TRUE)
+legend("bottomright", legend = c(
+    paste("GAM (AUC =", round(auc(roc_gam), 3), ")"),
+    paste("GLM (AUC =", round(auc(roc_glm), 3), ")"),
+    paste("BRT (AUC =", round(auc(roc_brt), 3), ")")
+  ), col = c("green", "red", "blue"), lwd = 2, bty = "n")
+```
+
+```{r}
+# Read all 4 shapefiles
+scotian_shelf <- st_read("/Users/lizamaguire/Desktop/Thesis_work/QGIS materials/Species suitable habitat/scotian shelf poly.shp") %>% mutate(region = "scotian_shelf")
+gulf_of_maine <- st_read("/Users/lizamaguire/Desktop/Thesis_work/QGIS materials/Species suitable habitat/gulf of maine poly.shp") %>% mutate(region = "gulf_of_maine")
+georges_bank <- st_read("/Users/lizamaguire/Desktop/Thesis_work/QGIS materials/Species suitable habitat/georges bank poly.shp") %>% mutate(region = "georges_bank")
+mid_atlantic <- st_read("/Users/lizamaguire/Desktop/Thesis_work/QGIS materials/Species suitable habitat/mid_atlantic poly.shp") %>% mutate(region = "mid_atlantic")
+
+# Combine into one sf object
+all_ecoregions <- bind_rows(scotian_shelf, gulf_of_maine, georges_bank, mid_atlantic)
+
+
+all_ecoregions$region <- as.character(all_ecoregions$region)  # Or rename existing column to `region`
+# Standardize all region shapefiles to have a 'region' column and identical structure
+standardize_region <- function(sf_obj, region_name) {
+  sf_obj <- sf_obj %>%
+    dplyr::select(geometry) %>%   # Drop all other columns, keep geometry
+    mutate(region = region_name)  # Add a region identifier
+  return(sf_obj)
+}
+
+# Apply standardization
+scotian_shelf <- standardize_region(scotian_shelf, "Scotian Shelf")
+gulf_of_maine <- standardize_region(gulf_of_maine, "Gulf of Maine")
+georges_bank <- standardize_region(georges_bank, "Georges Bank")
+mid_atlantic <- standardize_region(mid_atlantic, "Mid-Atlantic Bight")
+
+# Now bind safely
+all_ecoregions <- bind_rows(scotian_shelf, gulf_of_maine, georges_bank, mid_atlantic)
+
+print(all_ecoregions)
+plot(st_geometry(all_ecoregions), col = "lightblue", border = "black")
+
+st_write(all_ecoregions, "~/Desktop/Thesis_work/QGIS materials/Species suitable habitat/all_ecoregions.shp", append = FALSE)
+```
+
+```{r}
+all_ecoregions <- st_read("/Users/lizamaguire/Desktop/Thesis_work/QGIS materials/Species suitable habitat/all_ecoregions.shp")
+
+results <- updated_calculate_suitability(
+  model = `winter flounder_gam_model`,
+  scenario_layers_list = scenario_layers_list,
+  scenario_names = scenarios,
+  decade_names = decades,
+  species_name = "winter flounder",
+  region_shapes = all_ecoregions,  # <-- This overlays boundaries on plots
+  threshold = 0.7,
+  plot_maps = TRUE,
+  save_dir = "~/Desktop/Thesis_data/Final SDM models/ecoregions_GAM"
+)
+
+```
+
+```{r}
+library(stars)
+library(dplyr)
+library(ggplot2)
+library(gganimate)
+library(viridis)
+library(sf)
+library(stringr)
+
+create_decade_animation <- function(folder_path,
+                                    output_gif = "sdm_animation.gif",
+                                    region_shapes = NULL,
+                                    title_prefix = "Habitat Suitability") {
+  # Step 1: List .tif files in folder
+  tif_files <- list.files(folder_path, pattern = "\\.tif$", full.names = TRUE)
+  
+  if (length(tif_files) == 0) {
+    stop("No .tif files found in the specified folder.")
+  }
+
+  # Step 2: Extract metadata from filenames
+  extract_metadata <- function(path) {
+    filename <- basename(path)
+    # Extract decade (4-digit number) from filename
+    decade <- str_extract(filename, "_\\d{4}_|_\\d{4}\\.tif$") %>%
+      str_extract("\\d{4}") %>% as.numeric()
+    
+    species <- str_extract(filename, "^[^_]+")
+    scenario <- str_extract(filename, "SSP\\d+_\\d+")
+    
+    return(tibble(file = path, decade = decade, species = species, scenario = scenario))
+  }
+
+  file_info <- purrr::map_dfr(tif_files, extract_metadata) %>% arrange(decade)
+
+  # Step 3: Read rasters and convert to data frame
+  all_df <- purrr::map_dfr(file_info$file, function(f) {
+    r <- read_stars(f)
+    df <- as.data.frame(r, xy = TRUE)
+    names(df)[3] <- "suitability"
+    df$decade <- extract_metadata(f)$decade
+    df$species <- extract_metadata(f)$species
+    df$scenario <- extract_metadata(f)$scenario
+    return(df)
+  })
+
+  # Step 4: Plot
+  p <- ggplot() +
+    geom_raster(data = all_df, aes(x = x, y = y, fill = suitability)) +
+    scale_fill_viridis_c(option = "viridis", name = "Suitability", na.value = "transparent", limits = c(0, 1)) +
+    labs(
+      title = paste0(title_prefix, ": {closest_state}"),
+      x = "Longitude", y = "Latitude"
+    ) +
+    coord_equal() +
+    theme_minimal(base_size = 14) +
+    transition_states(decade, transition_length = 2, state_length = 1) +
+    ease_aes('linear')
+
+  # Optional: Overlay region shapes
+  if (!is.null(region_shapes)) {
+    region_shapes <- st_make_valid(region_shapes)
+    p <- p + geom_sf(data = region_shapes, fill = NA, color = "red", size = 2)
+  }
+
+  # Step 5: Animate and save
+  animate(p, fps = 15, width = 800, height = 600, renderer = gifski_renderer(output_gif))
+  message("Animation saved to: ", output_gif)
+}
+
+```
+
+```{r}
+create_decade_animation(
+  folder_path = "~/Desktop/Thesis_data/Final SDM models/ecoregions_GAM/plaice/plaice_ssp5_8.5",
+  output_gif = "plaice_decade_animation_ssp5_8.5.gif",
+  region_shapes = all_ecoregions, # or NULL
+  title_prefix = "Plaice Suitability (SSP5-8.5)"
+)
+
+```

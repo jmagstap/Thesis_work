@@ -1,0 +1,150 @@
+---
+title: "suitability line graphs"
+format: html
+editor: visual
+---
+
+## Suitability line graphs
+
+Load data with percentage of highly suitable habitat in pixels
+
+```{r}
+library(ggbreak)
+suitabilityssp2_4.5 = read_excel("/Users/lizamaguire/Desktop/Thesis_data/4.28.25.species.data/species_pixel_suitability.xlsx", sheet = "Percentage suitability ssp2-4.5")
+suitabilityssp5_8.5 = read_excel("/Users/lizamaguire/Desktop/Thesis_data/4.28.25.species.data/species_pixel_suitability.xlsx", sheet = "Percentage suitability ssp5-8.5")
+```
+
+```{r}
+# Pivot to long format
+long_suitabilityssp2_4.5 <- suitabilityssp2_4.5 %>%
+  pivot_longer(
+    cols = -Decade,
+    names_to = "Species",
+    values_to = "Suitability"
+  )
+
+long_suitabilityssp5_8.5 <- suitabilityssp5_8.5 %>%
+  pivot_longer(
+    cols = -Decade,
+    names_to = "Species",
+    values_to = "Suitability"
+  )
+```
+
+specify level of line plot you want each species
+
+```{r}
+upper_species <- c("Silver Hake", "Red Hake", "White Hake", "Plaice", "Winter Flounder", "Lobster", "Jonah Crab")
+lower_species <- c("Cod", "Haddock", "Pollock")
+```
+
+```{r}
+long_suitabilityssp2_4.5 <- long_suitabilityssp2_4.5 %>%
+  mutate(Panel = case_when(
+    Species %in% upper_species ~ "Upper",
+    Species %in% lower_species ~ "Lower",
+    TRUE ~ "Other"
+  ))
+
+# Filter to only those species
+long_suitabilityssp2_4.5 <- long_suitabilityssp2_4.5 %>% filter(Panel %in% c("Upper", "Lower"))
+
+# Plot
+suitabilityssp2_4.5_plot = ggplot(long_suitabilityssp2_4.5, aes(x = Decade, y = Suitability, color = Species)) +
+  geom_line(linewidth = 1.5) +
+  scale_y_continuous(labels = label_percent(accuracy = 0.5)) +
+  scale_x_continuous(breaks = seq(2010, 2090, by = 10)) +
+  facet_wrap(~factor(Panel, levels = c("Upper", "Lower")), ncol = 1, scales = "free_y") +
+  labs(
+    y = "% of Area with High Habitat Suitability (≥ 0.7)",
+    x = "Decade"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text = element_blank(),   # Removes "Upper" and "Lower" titles
+    legend.position = "bottom",
+    panel.spacing = unit(2, "lines"),
+    legend.text = element_text(size = 16),       # Increases legend text
+    legend.title = element_text(size = 16),      # Optional: bigger legend title
+    axis.text = element_text(size = 14),         # Increases axis tick labels
+    axis.title = element_text(size = 16)         # Increases axis titles
+  )
+
+```
+
+```{r}
+long_suitabilityssp5_8.5 <- long_suitabilityssp5_8.5 %>%
+  mutate(Panel = case_when(
+    Species %in% upper_species ~ "Upper",
+    Species %in% lower_species ~ "Lower",
+    TRUE ~ "Other"
+  ))
+
+# Filter to only those species
+long_suitabilityssp5_8.5 <- long_suitabilityssp5_8.5 %>% filter(Panel %in% c("Upper", "Lower"))
+
+# Plot
+suitabilityssp5_8.5_plot = ggplot(long_suitabilityssp5_8.5, aes(x = Decade, y = Suitability, color = Species)) +
+  geom_line(linewidth = 1.5) +
+  scale_y_continuous(labels = label_percent(accuracy = 0.5)) +
+  scale_x_continuous(breaks = seq(2010, 2090, by = 10)) +
+  # Reorder the factor levels so "Upper" comes last
+  facet_wrap(~factor(Panel, levels = c("Upper", "Lower")), ncol = 1, scales = "free_y") +
+  labs(
+    y = "% of Area with High Habitat Suitability (≥ 0.7)",
+    x = "Decade"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text = element_blank(),   # Removes "Upper" and "Lower" titles
+    legend.position = "bottom",
+    panel.spacing = unit(2, "lines"),
+    legend.text = element_text(size = 16),       # Increases legend text
+    legend.title = element_text(size = 16),      # Optional: bigger legend title
+    axis.text = element_text(size = 14),         # Increases axis tick labels
+    axis.title = element_text(size = 16)         # Increases axis titles
+  )
+```
+
+Heat map for species and ecoregion
+
+```{r}
+library(forcats)
+library(stringr)
+region_order <- c("Scotian Shelf", "Gulf of Maine", "Georges Bank", "Mid-Atlantic Bight")
+
+# Read and clean data
+lobster_data <- read_excel("/Users/lizamaguire/Desktop/Thesis_data/4.28.25.species.data/species_pixel_suitability.xlsx", 
+                           sheet = "Lobster", col_names = TRUE, skip = 1)
+
+# Clean and prepare
+filtered_pollock_data_ssp2_4.5 <- pollock_data %>%
+  filter(scenario == "SSP2-4.5", decade != 2010, region != "Total") %>%
+  mutate(region = str_squish(region)) %>%
+  mutate(region = str_replace_all(region, "\u00A0", " ")) %>%
+  mutate(region = factor(region, levels = rev(region_order)))  # reverse factor for correct top-to-bottom order
+filtered_pollock_data_ssp5_8.5 <- pollock_data %>%
+  filter(scenario == "SSP5-8.5", decade != 2010, region != "Total") %>%
+  mutate(region = str_squish(region)) %>%
+  mutate(region = str_replace_all(region, "\u00A0", " ")) %>%
+  mutate(region = factor(region, levels = rev(region_order)))  # reverse factor for correct top-to-bottom order
+```
+
+```{r}
+# Plot heatmap
+suitability_ssp5_8.5 = ggplot(filtered_pollock_data_ssp5_8.5, aes(x = as.factor(decade), y = region, fill = percent_suitable)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c(name = "% Suitable Habitat", option = "C") +
+  labs(
+    x = "Decade",
+    y = "Ecological Production Unit (EPU)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1, color = "black"),
+    axis.text.y = element_text(size = 12, color = "black"),
+    axis.title = element_text(size = 12, face = "bold", color = "black"),
+    strip.text = element_text(size = 12, face = "bold", color = "black")
+  )
+```

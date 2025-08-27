@@ -16,227 +16,194 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ## Installing libraries
 
 ```{r}
-  #required libraries for data retrieval, cleaning, and modeling
-library(tidyverse)
-library(yaml)
-library(raster)
-library(robis)
-library(stars)
-library(dismo)
-library(terra)
-library(maxnet)
-library(ggplot2)
-library(leaflet)
-library(leafem)
-library(lubridate)
-library(biooracler)
+source("Setup.R")
+# install.packages(remotes)
+
 ```
 
-Create YAML file to define all variables used in functions (spatial and temporal bounds, species names, and env layers)
-
 ```{r}
-vars <- read_yaml("/Users/lizamaguire/Desktop/Thesis_work/Current_data_files_10_21/config2 (1).yaml")
-sdm_data <- read.csv("/Users/lizamaguire/Desktop/Thesis_work/Current_data_files_10_21/Updated MeDMR data 10_10.csv")
+vars = read_config()
+crab_sdm_data = read_DMR()
+crab_sdm_data = pa_species2(s = crab_sdm_data, species = "Crab Jonah")
+
+
 ```
 
-## Get species data from Obis using function
+## Obtain and extract environmental data from sdmpredictors and call functions to prep for the model
 
 ```{r}
-  #Input: Latin name of a marine species, Output: data frame with occurrence points
-get_species_data <- function(spec_data, spec) {
-  
-    species_data <- read.csv(spec_data)
-   species_data$Date <- ymd_hms(species_data$Date)
-  
-  # Extract the month and create a new column
-  species_data$month <- month(species_data$Date)
-  
-# Swap Latitude and Longitude column names correctly
-colnames(species_data)[colnames(species_data) == "Longitude"] <- "temp_long"
-colnames(species_data)[colnames(species_data) == "Latitude"] <- "Longitude"
-colnames(species_data)[colnames(species_data) == "temp_long"] <- "Latitude"
+bb = get_bb()
+env = read_sdmpredictors(bb = bb) 
+values = st_extract(env, sdm_data) |> st_drop_geometry() |> as_tibble()
+data = bind_cols(sdm_data, values) |> relocate(geometry, .after = last_col())
+```
 
+Present SDM model using bottom temp and bottom salinity
 
-      filtered_data <- species_data %>%
-    mutate(
-      Number_Caught = as.numeric(Number_Caught),
-      pa = ifelse(Common_Name == spec & Number_Caught > 0, 1, 0)
-    )
-    
-    bounded_data <- filtered_data %>%
-      filter(Latitude >= vars$latmin & Latitude <= vars$latmax &
-               Longitude >= vars$lonmin & Longitude <= vars$lonmax) %>% 
-      dplyr::select(Latitude, Longitude, Year, month, Season, Number_Caught, Common_Name, pa)
-    
-    obs_sf <- bounded_data %>% 
-    sf::st_as_sf(
-      coords = c("Longitude", "Latitude"),
-      crs = st_crs(4326))
-    return(obs_sf)
+```{r}
+pres_env_files <- c(
+  "~/Desktop/Thesis_data/Biooraclev3/large_poly/temp_depth_mean/baseline/2000/",
+  "/Users/lizamaguire/Desktop/Thesis_data/pres/bot_sal_mean.tif"
+)
+
+# Create a raster stack
+pres_env_stack <- stack(pres_env_files)
+
+# Define Gulf of Maine polygon
+gulf_of_maine_poly <- terra::vect(
+  "POLYGON((-73.0 46.0, -64.0 46.0, -64.0 42.5, -68.5 41.0, -72.0 41.0, -73.0 42.5, -73.0 46.0))",
+  crs = "EPSG:4326"
+)
+
+# Ensure CRS compatibility between the raster stack and the polygon
+if (!identical(crs(pres_env_stack), crs(gulf_of_maine_poly))) {
+  gulf_of_maine_poly <- terra::project(gulf_of_maine_poly, crs(pres_env_stack))
 }
 
-```
+# Convert polygon to a format compatible with the raster package
+gulf_of_maine_poly_raster <- as(gulf_of_maine_poly, "Spatial")
 
-## Obtain and extract environmental data from BioOracle using functions
+# Crop and mask the raster stack to the Gulf of Maine region
+pres_env_stack <- crop(pres_env_stack, extent(gulf_of_maine_poly_raster))  # Crop to extent
+pres_env_stack <- mask(pres_env_stack, gulf_of_maine_poly_raster)  # Mask by polygon
 
-```{r}
-  #Input: variables, output: raster stack
-get_enviro_data <- function(envvars) {
-  #layercodes <- var
-  #dir = "ohw24_proj_sdm_us"
-  env <- sdmpredictors::load_layers(envvars, equalarea = FALSE, rasterstack = TRUE)
-  #Crop
-  env <- st_as_stars(env)
-  extent <- st_bbox(c(xmin = vars$lonmin, xmax = vars$lonmax, ymin = vars$latmin, ymax = vars$latmax), crs = st_crs(env))
-  env_warped <- st_warp(env, dest = st_as_stars(extent))
-  rc <- st_crop(x = env_warped, y = extent)
-  return(rc)
-}
-
-  #extract specific environmental covariates 
-  #ph <- get_enviro_data("BO_ph")
-extractEnvData <- function(rasterStack, points) {
-  env.stars <- terra::split(rasterStack)
-  spec.env <- stars::st_extract(env.stars, sf::st_coordinates(points))
-  spec.env.cleaned <- na.omit(spec.env)
-  return(spec.env.cleaned)
-}
-```
-
-## Creating pseudo-absence points and cropping it to environmental layer
-
-```{r}
-getNegativePoints <- function(species_data_sf) {
-  # Filter the dataset to get only points where pa = 0
-  negative_points <- speciesPoints %>% filter(pa == 0)
-  # Check if there are any negative points
-  if (nrow(negative_points) == 0) {
-    stop("No negative points (pa = 0) found in the dataset.")
-  }
-  
-  # Return the negative points as an sf object
-  return(negative_points)
-}
-```
-
-## Call functions to prep the data for model
-
-```{r}
-layers <- c(vars$envVars)
-envRasterStack <- get_enviro_data(layers[1:5])
-envRasterStack <- st_transform(envRasterStack, crs = 4326)
-plot(envRasterStack)
-speciesPoints <- get_species_data("/Users/lizamaguire/Desktop/Thesis_work/Current_data_files_10_21/Updated MeDMR data 10_10.csv", "Haddock")
-absPoints <- getNegativePoints(speciesPoints)
-
-pres <- extractEnvData(envRasterStack, speciesPoints) |> mutate(pa=1)
-
-abs <- extractEnvData(envRasterStack, absPoints) |> mutate(pa=0)
-
-allData <- rbind(pres, abs)
-
-all_data_omit <- na.omit(allData)
-
-head(all_data_omit)
+# Plot the cropped and masked stack
+plot(pres_env_stack)
 ```
 
 ## Fit the model
 
 ```{r}
-  #sdm.model \<- maxnet::maxnet(presence_absence_df, environmental_df)}
-  #responses \<- plot(sdm.model, type = "cloglog")
-presence_absence_df <- all_data_omit %>%
-  dplyr::select(pa)
-
-environmental_df <- all_data_omit %>%
-  dplyr::select(-c(pa))
-
-  # Ensure that 'Presence' column is extracted as a numeric vector
-presence_absence_vector <- presence_absence_df$pa
-
-sdm_model <- gam(
-  pa ~ s(BO21_tempmean_bdmax) + s(BO22_salinitymean_bdmax),
-  data = all_data_omit,
+gam_sdm_model <- mgcv::gam(
+  count ~ s(bot_temp, k=4), 
+  data = Jcrab_sdm_data,
   family = binomial(link = "logit")
-)
+) |> readr::write_rds(file.path(THESIS_DATA, "V0_Models", "V0_gam.model"))
+```
 
+```{r}
   # Plot the response curves
-responses <- plot(sdm.model, type = "logistic")
+plot(gam_sdm_model, 
+     pages = 1,       # Display on a single page (if you have multiple smooth terms)
+     xlab = "Bottom Temperature (ºC)")
 
+summary(gam_sdm_model)
+
+responses <- plot(gam_sdm_model)
+pdf(file.path(THESIS_DATA, "V0_Models", "V0_gam.pdf"))
+plot(gam_sdm_model, pages=1)
+ok = dev.off()
 ```
 
 ```{r}
-plot(envRasterStack)
+log_reg_mod = glm(count ~ bot_temp, family = binomial, data = pa_crab) 
+
+
+
+# Summarize the model results
+
+glance(log_reg_mod) 
+
+ggplot(pa_crab, aes(x=count, y=bot_temp)) + geom_point() +
+      stat_smooth(method="glm", color="green", se=FALSE, 
+                method.args = list(family=binomial))
 ```
 
-## Process future environmental scenario data to predict species distribution
-
 ```{r}
-future_layers <- sdmpredictors::list_layers_future(marine = TRUE) %>% 
-  filter(current_layer_code %in% c(vars$envVars)) %>% 
-  filter(year == "2050") %>% 
-  filter(scenario == "RCP26") %>% 
-  filter(model == "AOGCM")
-future_layers_list <- future_layers$layer_code
+bot_temp_2040sp119 = "/Users/lizamaguire/Desktop/Thesis_data/Biooraclev3/large_poly/temp_depth_mean/ssp119/2040/ssp119_2040_depthmean_thetao_mean.tif"
 
-print(future_layers_list)
+bot_temp = read_stars(bot_temp_2040sp119)
 
-  #concatenate and stack all environmental raster layers 
-BO21_tempmean_bdmax <- get_enviro_data(future_layers_list[1])
-BO21_tempmean_ss <- get_enviro_data(future_layers_list[2])
-BO22_chlomean_ss <- get_enviro_data(future_layers_list[3])
-BO22_salinitymean_bdmax <- get_enviro_data(future_layers_list[4])
-BO22_salinitymean_ss <- get_enviro_data(future_layers_list[5])
-concat <- c(BO21_tempmean_bdmax, BO21_tempmean_ss, BO22_chlomean_ss, BO22_salinitymean_bdmax, BO22_salinitymean_ss)
+# Convert stars object to data.frame (extracting values)
+bot_temp <- as.data.frame(bot_temp_2040sp119stars, wide = TRUE)
 
-names(concat) <- future_layers$current_layer_code
+# Apply the prediction (ensure gam_sdm_model is the correct model)
+pred <- predict(gam_sdm_model, newdata = bot_temp, type = "response")
 
-env_data_df <- as.data.frame(concat, na.rm = TRUE, xy = TRUE)  # If needed, use xy for coordinates
 
-# Add the predicted values back to the dataframe
-env_data_df$predicted <- predicted
 
-# Ensure you have the x, y coordinates in the dataframe
-# Now, convert it into a raster (stars object)
-predicted_raster <- st_as_stars(
-  env_data_df,
-  dims = c("x", "y"),    # Specify the spatial dimensions
-  values = "predicted"   # Specify the column with the predicted values
-)
 
-# Assign CRS if not already defined
-st_crs(predicted_raster) <- st_crs(4326)
 
-# Plot to verify
-plot(predicted_raster)
 
+
+
+
+pred <- predict(bot_temp_2040sp119stars, gam_sdm_model, type = "response")
+
+# Plot the resulting raster
+plot(pred)
+
+clamp <- TRUE      
+type <- "cloglog"
+
+present_predicted_stars <- st_as_stars(pred)
 
 m <- leaflet() %>%
   addTiles() %>%
   leafem::addStarsImage(
-    predicted_raster,
+    present_predicted_stars,
     colors = viridis::viridis(256),
     opacity = 0.8
   )
 
 m
+```
 
+## Process future environmental scenario data to predict species distribution
 
-# Predict species distribution based on the environmental data
-predicted <- predict(sdm_model, newdata = env_data_df, type = "response")
+```{r}
+RCP45.2050_env_files <- c(
+  "/Users/lizamaguire/Desktop/Thesis_data/SDMpredictors/2050 conditions/RCP45/2050AOGCM.RCP45.Benthic.Max.Depth.Temperature.Mean.tif.BOv2_1.tif",
+  "/Users/lizamaguire/Desktop/Thesis_data/SDMpredictors/2050 conditions/RCP45/2050AOGCM.RCP45.Benthic.Max.Depth.Salinity.Mean.tif.BOv2_1.tif"
+)
 
-  #logistic model type
+# Create a raster stack
+RCP45.2050_env_stack <- stack(RCP45.2050_env_files)
+
+# Define Gulf of Maine polygon
+gulf_of_maine_poly <- terra::vect(
+  "POLYGON((-73.0 46.0, -64.0 46.0, -64.0 42.5, -68.5 41.0, -72.0 41.0, -73.0 42.5, -73.0 46.0))",
+  crs = "EPSG:4326"
+)
+# Convert polygon to a format compatible with the raster package
+gulf_of_maine_poly_raster <- as(gulf_of_maine_poly, "Spatial")
+
+# Crop and mask the raster stack to the Gulf of Maine region
+RCP45.2050_env_stack <- crop(RCP45.2050_env_stack, extent(gulf_of_maine_poly_raster))  # Crop to extent
+RCP45.2050_env_stack <- mask(RCP45.2050_env_stack, gulf_of_maine_poly_raster)  # Mask by polygon
+
+# Plot the cropped and masked stack
+plot(RCP45.2050_env_stack)
+```
+
+```{r}
+gam_sdm_model <- mgcv::gam(
+  pa ~ s(bot_temp_mean, k=4) + s(bot_sal_mean, k=4), 
+  data = data,
+  family = binomial(link = "logit")
+) |> readr::write_rds(file.path(THESIS_DATA, "V0_Models", "V0_gam.model"))
+```
+
+```{r}
+RCP45.2050pred <- raster::predict(RCP45.2050_env_stack, gam_sdm_model, type = "response")
+
+# Plot the resulting raster
+plot(RCP45.2050pred)
+
 clamp <- TRUE      
-type <- "logistic"
+type <- "cloglog"
 
-predicted_stars <- st_as_stars(predicted)
+RCP45.2050_predicted_stars <- st_as_stars(RCP45.2050pred)
 
-print(dim(predicted))
+m <- leaflet() %>%
+  addTiles() %>%
+  leafem::addStarsImage(
+    RCP45.2050_predicted_stars,
+    colors = viridis::viridis(256),
+    opacity = 0.8
+  )
 
-
-# Check if it contains the right dimensions
-print(st_dimensions(predicted_stars))
-
+m
 ```
 
 ## Plot the SDM using leaflet

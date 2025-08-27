@@ -1,0 +1,437 @@
+---
+title: "Initial_SDMs_3_23_25"
+format: html
+editor: visual
+---
+
+```{r}
+path = biooracle_path("NES") |> make_path()
+db = read_database(path) |> print()
+source("Setup.R")
+
+extract_env_vars("Hake White")
+
+white_hake_sdm_data = as_tibble(load_species("Hake White")[[1]])
+
+```
+
+```{r}
+#baseline
+Baseline2010s_layers <- load_bioOracle_layers("baseline", "2010", path, db)
+
+#SSP 2 - RCP 4.5
+ssp245_2020_layers <- load_bioOracle_layers("ssp245", "2020", path, db)
+ssp245_2030_layers <- load_bioOracle_layers("ssp245", "2030", path, db)
+ssp245_2040_layers <- load_bioOracle_layers("ssp245", "2040", path, db)
+ssp245_2050_layers <- load_bioOracle_layers("ssp245", "2050", path, db)
+ssp245_2060_layers <- load_bioOracle_layers("ssp245", "2060", path, db)
+ssp245_2070_layers <- load_bioOracle_layers("ssp245", "2070", path, db)
+ssp245_2080_layers <- load_bioOracle_layers("ssp245", "2080", path, db)
+ssp245_2090_layers <- load_bioOracle_layers("ssp245", "2090", path, db)
+
+#SSP 5 - RCP 8.5
+ssp585_2020_layers <- load_bioOracle_layers("ssp585", "2020", path, db)
+ssp585_2030_layers <- load_bioOracle_layers("ssp585", "2030", path, db)
+ssp585_2040_layers <- load_bioOracle_layers("ssp585", "2040", path, db)
+ssp585_2050_layers <- load_bioOracle_layers("ssp585", "2050", path, db)
+ssp585_2060_layers <- load_bioOracle_layers("ssp585", "2060", path, db)
+ssp585_2070_layers <- load_bioOracle_layers("ssp585", "2070", path, db)
+ssp585_2080_layers <- load_bioOracle_layers("ssp585", "2080", path, db)
+ssp585_2090_layers <- load_bioOracle_layers("ssp585", "2090", path, db)
+```
+
+```{r}
+scenario_layers_list <- list(
+"SSP2-4.5" = list(
+    "2010" = Baseline2010s_layers,
+    "2020" = ssp245_2020_layers,
+    "2030" = ssp245_2030_layers,
+    "2040" = ssp245_2040_layers,
+    "2050" = ssp245_2050_layers,
+    "2060" = ssp245_2060_layers,
+    "2070" = ssp245_2070_layers,
+    "2080" = ssp245_2080_layers,
+    "2090" = ssp245_2090_layers
+  ),
+  "SSP5-8.5" = list(
+    "2020" = ssp585_2020_layers,
+    "2030" = ssp585_2030_layers,
+    "2040" = ssp585_2040_layers,
+    "2050" = ssp585_2050_layers,
+    "2060" = ssp585_2060_layers,
+    "2070" = ssp585_2070_layers,
+    "2080" = ssp585_2080_layers,
+    "2090" = ssp585_2090_layers
+)
+)
+# Define scenario and decade names
+scenarios <- c("SSP2-4.5", "SSP5-8.5")
+decades <- c(2010, 2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090)
+```
+
+```{r}
+library(ggplot2)
+library(viridis)  # For better color scales
+library(stars)
+
+# Basic ocean-like salinity map
+Map <- ggplot() +  
+  geom_stars(data = ssp245_2050_layers[8], alpha = 0.9) +
+  scale_fill_gradient(
+  name = "Bottom Temperature (ºC)",
+  low = "#ede155",   # light blue
+  high = "#d9512b",  # deep blue
+  na.value = "transparent") +
+  labs(
+    title = "Projected Bottom Temperature (SSP2-4.5, 2050)",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  coord_sf(crs = st_crs(4326)) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    panel.grid = element_blank(),
+    plot.title = element_text(face = "bold")
+  )
+
+Map
+```
+
+```{r}
+gam_sdm_model_topo <- mgcv::gam(
+pa ~ s(bot_temp, k = 4) + s(bot_salin, k = 4) + s(topographic_position_index, k = 4) + s(aspect, k = 4) + s(bot_ph, k = 4),
+family = binomial(link = "logit"),
+data = white_hake_sdm_data)
+
+cod_GAM = readRDS("/Users/lizamaguire/Desktop/SDM products/SDM_gam_model_objects/cod_GAM.rds")
+
+summary(cod_GAM)
+
+
+```
+
+```{r}
+cod_lrg_model <- glm(pa ~ bot_temp + bot_salin + bot_ph + aspect + topographic_position_index, family = binomial(link = "logit"), data = cod_train_data)
+
+check_model(lrg_model)
+
+# Generate predicted probabilities
+lrg_predicted_probs <- predict(lrg_model, type = "response")
+
+```
+
+```{r}
+# Predict species occurrence for the new raster stack
+predictions_gam <- predict(cod_GAM, newdata = ssp245_2030_layers, type = "response")
+
+nbreaks = 100
+
+plot(predictions_gam,
+     main = "Red Hake SSP2-4.5 2030 Conditions",
+     nbreaks = nbreaks,
+     col = hcl.colors(nbreaks-1, palette = "viridis"),
+     key.length = 1,
+     axes = TRUE)
+
+write_stars(species_predictions_gam, "~/Desktop/Thesis_data/Final SDM models/GAM/White hake/white_hake_gam_2010s_baseline.tif")
+
+values_gam <- species_predictions_gam[[1]]
+
+# Sum all values >= 0.7 (ignoring NA)
+total_suitability_gam <- sum(values_gam[values_gam >= 0.7], na.rm = TRUE)
+
+total_suitability_gam
+```
+
+```{r}
+haddock_rf_core <- extract_fit_parsnip(loaded_haddock_rf_model)$fit
+# Convert to data frame
+env_df <- as.data.frame(ssp245_2030_layers, na.rm = TRUE) %>% na.omit
+
+# Predict
+env_df$pred <- predict(haddock_rf_core, data = env_df, type = "response")$predictions [, 2]
+
+# Create SpatRaster from xyz data
+r_pred <- rast(x = env_df[, c("x", "y", "pred")], type = "xyz", crs = "EPSG:4326")
+library(viridis)
+plot(r_pred, col = viridis(100), main = "Predicted Habitat Suitability")
+```
+
+```{r}
+r <- species_predictions_gam  # or load any raster stars object
+regions <- region_shapes  # your polygons
+
+pred_df <- as.data.frame(r, xy = TRUE)
+names(pred_df)[3] <- "suitability"
+
+ggplot() +
+  geom_raster(data = pred_df, aes(x = x, y = y, fill = suitability)) +
+  scale_fill_viridis_c() +
+  geom_sf(data = regions, fill = NA, color = "red", size = 1) +
+  coord_sf()
+```
+
+Only summing pixels with value greater than or equal to 0.7:
+
+```{r}
+total_suitability_results <- save_predictions_and_calculate_suitability(
+  model = gam_sdm_model_topo,  # replace with your fitted GAM model
+  scenario_layers_list = scenario_layers_list,
+  scenario_names = scenarios,
+  decade_names = decades,
+  species_name = "white_hake",  # or "atlantic_cod", etc.
+  save_dir = "~/Desktop/Thesis_data/Final SDM models/GAM",
+  threshold = 0.7,
+  plot_maps = TRUE  # change to FALSE if you don't want plots
+)
+
+```
+
+```{r}
+species_predictions_lrg <- predict_raster(lrg_model, newdata = ssp245_2020_layers, type = "response")
+
+nbreaks = 100
+
+prediction_raster = plot(species_predictions_lrg,
+     main = "Plaice 2020 SSP2-4.5",
+     nbreaks = nbreaks,
+     col = hcl.colors(nbreaks-1, palette = "viridis"),
+     key.length = 1,
+     axes = TRUE)
+write_stars(species_predictions_lrg, "~/Desktop/Thesis_data/Final SDM models/Logistic/Plaice/plaice_lrg_2020_SSP2_4.5.tif")
+
+values_lrg <- species_predictions_lrg[[1]]
+
+# Sum all pixel values (ignoring NA)
+total_suitability_lrg <- sum(values_lrg, na.rm = TRUE)
+
+total_suitability_lrg
+```
+
+```{r}
+plaice_sdm_data = read_sf("~/Desktop/Thesis_data/4.28.25.species.data/plaice american (dab)_sdm_data.gpkg")
+
+p = extract_points(species_predictions_lrg, plaice_sdm_data, form = "wide")
+```
+
+```{r}
+library(gganimate)
+library(gifski)
+
+red_hake_gam_tif_files <- list.files(
+  path = "~/Desktop/Thesis_data/Final SDM models/GAM/Red hake", 
+  pattern = "\\.tif$", 
+  full.names = TRUE
+)
+
+file_info <- tibble(
+  file = red_hake_gam_tif_files,
+  filename = basename(red_hake_gam_tif_files)
+) %>%
+  mutate(
+    species = "red hake",
+    model = str_extract(filename, "(?<=_)[^_]+(?=_)"),  # grabs 'gam'
+    year = str_extract(filename, "_\\d{4}_") %>% str_extract("\\d{4}") %>% as.integer(),
+    scenario = case_when(
+      str_detect(filename, "SSP5[_\\-.]8\\.5") ~ "SSP5-8.5",
+      str_detect(filename, "baseline") ~ "baseline",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  dplyr::select(file, species, model, year, scenario)
+
+# Step 3: Convert rasters to data frame
+raster_to_df <- function(file, species, model, year, scenario) {
+  r <- terra::rast(file)
+  df <- as.data.frame(r, xy = TRUE)
+  names(df)[3] <- "suitability"
+  df$species <- species
+  df$model <- model
+  df$year <- year
+  df$scenario <- scenario
+  return(df)
+}
+
+# Step 4: Combine all rasters into one data frame
+all_rasters_df <- purrr::pmap_dfr(file_info, raster_to_df)
+
+# Step 5: Filter to SSP5_85 only for Haddock
+plot_df <- all_rasters_df %>%
+  filter(scenario %in% c("baseline", "SSP5-8.5")) %>%
+  arrange(year)
+
+# Check filtering
+print(unique(plot_df$scenario))
+print(unique(plot_df$year))
+
+# Step 6: Create animation
+red_hake_anim <- ggplot(plot_df, aes(x = x, y = y, fill = suitability)) +
+  geom_raster() +
+  scale_fill_viridis_c(option = "viridis", name = "Suitability", limits = c(0, 1)) +
+  coord_fixed() +
+  theme_minimal() +
+  labs(
+    title = "Red Hake GAM Forecast — Year: {frame_time} | Scenario: {scenario}",
+    x = "Longitude", y = "Latitude"
+  ) +
+  transition_time(year) +
+  ease_aes("linear")
+
+# Step 7: Render the animation to a GIF
+animate(red_hake_anim, fps = 15, width = 800, height = 600, 
+        renderer = gifski_renderer("red_hake_SSP5_8.5.gif"))
+```
+
+```{r}
+create_sdm_animation(
+  species_name = "white hake",
+  species_path = "~/Desktop/Thesis_data/Final SDM models/GAM/White hake",
+  scenarios_to_include = c("baseline", "SSP5-8.5"),
+  output_path = "~/Desktop/Thesis_work/SDM products/SDM gifs"
+)
+```
+
+```{r}
+# Step 1: List TIF files
+cod_gam_tif_files <- list.files(
+  path = "~/Desktop/Thesis_data/Final SDM models/ecoregions_GAM/cod", 
+  pattern = "\\.tif$", 
+  full.names = TRUE
+)
+
+# Step 2: Extract metadata from filenames
+file_info <- tibble(
+  file = cod_gam_tif_files,
+  filename = basename(cod_gam_tif_files)
+) %>% 
+  mutate(
+    species = str_extract(filename, "^[^_]+"),
+    model = str_extract(filename, "(?<=_)[^_]+(?=_)"),
+    year = str_extract(filename, "_\\d{4}_") %>% str_extract("\\d{4}") %>% as.integer(),
+    scenario = str_extract(filename, "SSP\\d+_\\d+")
+  ) %>% 
+  dplyr::select(file, species, model, year, scenario)
+
+# Step 3: Convert rasters to data frame
+raster_to_df <- function(file, species, model, year, scenario) {
+  r <- terra::rast(file)
+  df <- as.data.frame(r, xy = TRUE)
+  names(df)[3] <- "suitability"
+  df$species <- species
+  df$model <- model
+  df$year <- year
+  df$scenario <- scenario
+  return(df)
+}
+
+# Step 4: Combine all rasters into one data frame
+all_rasters_df <- purrr::pmap_dfr(file_info, raster_to_df)
+
+# Step 5: Filter to SSP5_85 only for Cod
+plot_df <- all_rasters_df %>% 
+  filter(tolower(species) == "cod", scenario == "SSP5_85")
+
+# Add decade column for animation (e.g., 1990s, 2000s)
+plot_df <- plot_df %>%
+  mutate(decade = floor(year / 10) * 10)
+
+# Verify filtering
+print(unique(plot_df$scenario))
+print(unique(plot_df$year))
+
+# (Optional) If you have ecoregion shapefiles loaded, define region_shapes here, else set NULL
+# region_shapes <- sf::st_read("path/to/ecoregions_shapefile.shp")
+region_shapes <- all_ecoregions
+
+# Step 6: Create animation
+cod_anim <- ggplot(plot_df, aes(x = x, y = y, fill = suitability)) +
+  geom_raster() +
+  { if (!is.null(region_shapes)) geom_sf(data = region_shapes, fill = NA, color = "red", size = 0.7) } +
+  scale_fill_viridis_c(option = "viridis", name = "Suitability", na.value = "transparent") +
+  labs(
+    title = "Cod: {closest_state} under SSP5_85",
+    x = "Longitude", y = "Latitude"
+  ) +
+  coord_sf() +
+  theme_minimal(base_size = 14) +
+  transition_states(decade, transition_length = 2, state_length = 1) +
+  ease_aes('linear')
+
+# Step 7: Render the animation to a GIF
+animate(cod_anim, fps = 15, width = 800, height = 600, 
+        renderer = gifski_renderer("Cod_SSP5_85.gif"))
+```
+
+```{r}
+decades_df <- data.frame(year = seq(2010, 2090, by = 10))
+
+# Create the animation
+decade_anim <- ggplot(decades_df, aes(x = 0, y = 0, label = year)) +
+  geom_text(size = 20, fontface = "bold") +
+  theme_void() +
+  labs(title = "Decade: {closest_state}") +
+  transition_states(
+    states = year,
+    transition_length = 0,
+    state_length = 1
+  )
+
+# Animate it
+animate(decade_anim, fps = 15, width = 400, height = 300,
+        renderer = gifski_renderer("Decade_Only_Labels.gif"))
+```
+
+```{r}
+# Variables from file naming conventions
+variables <- c("so", "thetao", "ph")  # salinity, bottom temp, pH
+decades <- seq(2020, 2090, by = 10)
+scenarios <- c("245", "585")
+folder <- "~/Desktop/Decadal_environmental_data"  # Change to your actual path
+
+baseline_df <- get_baseline_means(variables, folder)
+
+# Get future
+future_df <- do.call(rbind, lapply(scenarios, function(s) {
+  get_decadal_means(s, variables, decades, folder)
+}))
+
+# Combine all
+all_data <- rbind(baseline_df, future_df)
+
+summary_table <- all_data %>%
+  pivot_wider(names_from = variable, values_from = mean_value) %>%
+  rename(
+    salinity = so,
+    bottom_temp = thetao,
+    pH = ph
+  ) %>%
+  arrange(scenario, decade)
+```
+
+```{r}
+# Get baseline by variable
+baseline_vals <- baseline_df %>%
+  pivot_wider(names_from = variable, values_from = mean_value) %>%
+  rename(
+    salinity_baseline = so,
+    temp_baseline = thetao,
+    ph_baseline = ph
+  )
+
+# Extract just the 2010 baseline row
+baseline_row <- summary_table %>%
+  filter(decade == 2010, scenario == "Baseline") %>%
+  dplyr::select(salinity, bottom_temp, pH)
+
+# Use mutate to apply baseline subtraction
+change_table <- summary_table %>%
+  filter(scenario != "Baseline") %>%
+  mutate(
+    delta_temp = bottom_temp - baseline_row$bottom_temp,
+    delta_salinity = salinity - baseline_row$salinity,
+    delta_ph = pH - baseline_row$pH
+  ) %>%
+  dplyr::select(scenario, decade, delta_temp, delta_salinity, delta_ph)
+
+```
